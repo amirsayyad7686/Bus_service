@@ -1,0 +1,97 @@
+* { box-sizing: border-box; }
+
+:root {
+  --bg:      #0b1015;
+  --panel:   #111a22;
+  --border:  #1f2c38;
+  --text:    #cfeee0;
+  --muted:   #6f8899;
+  --accent:  #38e5a0;
+  --accent2: #38b6ff;
+  --warn:    #ff6b6b;
+}
+
+html, body {
+  margin: 0; padding: 0;
+  height: 100%;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+  background: linear-gradient(180deg, #0e161e 0%, #0b1015 100%);
+}
+
+header h1 {
+  font-size: 16px;
+  margin: 0;
+  color: var(--accent);
+  letter-spacing: 1px;
+}
+
+.badge {
+  padding: 4px 10px; border-radius: 20px; font-size: 12px;
+  font-weight: bold; letter-spacing: .5px;
+}
+.badge.good { background: #143a25; color: var(--accent); }
+.badge.bad  { background: #3a1414; color: var(--warn); }
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  height: calc(100vh - 52px);
+}
+
+#viewer {
+  position: relative;
+  overflow: hidden;
+  background: radial-gradient(ellipse at center, #101a24 0%, #05080b 100%);
+}
+
+#cubeCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+#panel {
+  overflow-y: auto;
+  padding: 12px;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #0e161d;
+}
+.card h2 {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 1.2px;
+  color: var(--accent2);
+  margin: 0 0 8px 0; font-weight: 600;
+}
+.card.small { padding: 8px 12px; font-size: 11px; color: var(--muted); }
+
+.row {
+  display: flex; justify-content: space-between;
+  padding: 3px 0;
+  font-size: 13px;
+}
+.row span:first-child { color: var(--muted); }
+.row span:last-child  { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.val.good { color: var(--accent); }
+.val.bad  { color: var(--warn); }
+
+@media (max-width: 800px) {
+  main { grid-template-columns: 1fr; }
+  #viewer { height: 45vh; }
+  #panel  { height: 55vh; border-left: none; border-top: 1px solid var(--border); }
+}
