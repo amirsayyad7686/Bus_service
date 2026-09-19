@@ -22,16 +22,29 @@
 
 <main>
   <section id="viewer">
-    <canvas id="cubeCanvas"></canvas>
+    <canvas id="carCanvas"></canvas>
+    <div id="viewerHint">drag to orbit · scroll to zoom</div>
   </section>
 
   <aside id="panel">
     <div class="card">
+      <h2>Speed</h2>
+      <canvas id="speedGauge"></canvas>
+    </div>
+
+    <div class="card map-card">
+      <h2>Route
+        <button id="clearMap" class="mini">clear</button>
+      </h2>
+      <canvas id="trackMap"></canvas>
+    </div>
+
+    <div class="card">
       <h2>Position</h2>
       <div class="row"><span>Latitude</span><span id="lat">—</span></div>
       <div class="row"><span>Longitude</span><span id="lon">—</span></div>
-      <div class="row"><span>Speed</span><span id="speed">—</span></div>
-      <div class="row"><span>GPS fix</span><span id="fix" class="val">—</span></div>
+      <div class="row"><span>GPS fix</span><span id="fix" class="val bad">NO</span></div>
+      <div class="row"><span>Distance</span><span id="dist">—</span></div>
     </div>
 
     <div class="card">
