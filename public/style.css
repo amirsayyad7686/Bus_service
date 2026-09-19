@@ -123,15 +123,82 @@ main {
 }
 
 .map-card { flex: 1; min-height: 200px; display: flex; flex-direction: column; }
-#trackMap {
-  display: block;
-  width: 100%;
+/* ---- Map container ---- */
+.map-card {
   flex: 1;
-  min-height: 160px;
-  border-radius: 4px;
+  min-height: 280px;
+  display: flex;
+  flex-direction: column;
 }
+
+#map {
+  flex: 1;
+  min-height: 240px;
+  width: 100%;
+  border-radius: 6px;
+  background: #0a141b;
+  overflow: hidden;
+}
+
+/* Leaflet dark theme overrides */
+.leaflet-container {
+  background: #0a141b;
+  font-family: ui-monospace, monospace;
+}
+.leaflet-tile {
+  filter: brightness(0.75) contrast(1.05) saturate(0.85) hue-rotate(180deg) invert(0.92);
+}
+.leaflet-control-attribution {
+  background: rgba(10, 20, 27, 0.7) !important;
+  color: #6f8899 !important;
+  font-size: 9px !important;
+}
+.leaflet-control-attribution a { color: #38b6ff !important; }
+.leaflet-bar a {
+  background: #0e161d !important;
+  color: #cfeee0 !important;
+  border-color: #1f2c38 !important;
+}
+.leaflet-bar a:hover {
+  background: #16252f !important;
+  color: #38e5a0 !important;
+}
+
+.mini {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  padding: 2px 8px;
+  font-size: 10px;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: monospace;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  margin-left: 4px;
+}
+.mini:hover { color: var(--warn); border-color: var(--warn); }
+.mini.active { color: var(--accent); border-color: var(--accent); }
 
 @media (max-width: 860px) {
   main { grid-template-columns: 1fr; grid-template-rows: 45vh 1fr; }
   #panel { border-left: none; border-top: 1px solid var(--border); }
+}
+
+/* Leaflet markers */
+.car-marker-inner {
+  filter: drop-shadow(0 0 6px rgba(255, 216, 102, 0.8));
+  animation: pulse-marker 1.6s infinite ease-in-out;
+}
+@keyframes pulse-marker {
+  0%, 100% { transform: scale(1);   opacity: 1;   }
+  50%      { transform: scale(1.15); opacity: 0.85; }
+}
+
+.start-marker-inner {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #38b6ff;
+  border: 2px solid #08121a;
+  box-shadow: 0 0 8px rgba(56, 182, 255, 0.9);
 }

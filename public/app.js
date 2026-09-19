@@ -523,152 +523,137 @@ class SpeedGauge {
 /* ==================================================================
    5. TRACK MAP (canvas 2D — draws the trail)
    ================================================================== */
+/* ==================================================================
+   5. LEAFLET TRACK MAP
+   ================================================================== */
 class TrackMap {
-  constructor(canvas) {
-    this.canvas = canvas;
-    this.ctx = canvas.getContext('2d');
+  constructor(divId, opts = {}) {
+    this.follow = true;
+    this.startLatLng = opts.center || [29.5918, 52.5837];   // Shiraz default
+    this.startZoom   = opts.zoom   || 14;
     this.points = [];
-    this.maxPoints = 3000;
-    this.totalDistance = 0;   // meters
+    this.totalDistance = 0;
+
+    this.map = L.map(divId, {
+      zoomControl: true,
+      attributionControl: true,
+      preferCanvas: true
+    }).setView(this.startLatLng, this.startZoom);
+
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(this.map);
+
+    this.trail = L.polyline([], {
+      color: '#38e5a0',
+      weight: 4,
+      opacity: 0.9,
+      lineJoin: 'round',
+      lineCap: 'round'
+    }).addTo(this.map);
+
+    // glow underlay
+    this.glow = L.polyline([], {
+      color: '#38e5a0',
+      weight: 10,
+      opacity: 0.22,
+      lineJoin: 'round',
+      lineCap: 'round'
+    }).addTo(this.map);
+
+    this.marker = null;
+    this.startMarker = null;
+
+    // First fix will set the view
+    this.locked = false;
   }
 
-  clear() { this.points = []; this.totalDistance = 0; this.draw(); }
+  clear() {
+    this.points = [];
+    this.totalDistance = 0;
+    this.trail.setLatLngs([]);
+    this.glow.setLatLngs([]);
+    if (this.marker) { this.map.removeLayer(this.marker); this.marker = null; }
+    if (this.startMarker) { this.map.removeLayer(this.startMarker); this.startMarker = null; }
+    this.locked = false;
+  }
+
+  toggleFollow() {
+    this.follow = !this.follow;
+    if (this.follow && this.points.length) {
+      const last = this.points[this.points.length - 1];
+      this.map.panTo([last.lat, last.lon], { animate: true });
+    }
+    return this.follow;
+  }
 
   addPoint(lat, lon) {
     if (Math.abs(lat) < 0.0001 || Math.abs(lon) < 0.0001) return;
+
     const last = this.points[this.points.length - 1];
     if (last && last.lat === lat && last.lon === lon) return;
 
-    // accumulate distance
-    if (last) {
-      this.totalDistance += haversine(last.lat, last.lon, lat, lon);
-    }
+    if (last) this.totalDistance += haversine(last.lat, last.lon, lat, lon);
 
     this.points.push({ lat, lon });
-    if (this.points.length > this.maxPoints) this.points.shift();
-  }
+    if (this.points.length > 10000) this.points.shift();
 
-  draw() {
-    const c = this.canvas, ctx = this.ctx;
-    const dpr = window.devicePixelRatio || 1;
-    const w = c.clientWidth, h = c.clientHeight;
-    if (w === 0 || h === 0) return;
-    if (c.width !== w * dpr || c.height !== h * dpr) {
-      c.width = w * dpr; c.height = h * dpr;
-    }
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const latlngs = this.points.map(p => [p.lat, p.lon]);
+    this.trail.setLatLngs(latlngs);
+    this.glow.setLatLngs(latlngs);
 
-    // Background
-    ctx.fillStyle = '#060b10';
-    ctx.fillRect(0, 0, w, h);
+    // Current position marker (car-shaped div icon)
+    const here = [lat, lon];
+    const carIcon = L.divIcon({
+      className: 'car-marker',
+      html: `<div class="car-marker-inner">
+               <svg width="26" height="26" viewBox="0 0 24 24" fill="#ffd866">
+                 <path d="M12 2 L19 10 L15 10 L15 22 L9 22 L9 10 L5 10 Z"/>
+               </svg>
+             </div>`,
+      iconSize: [26, 26],
+      iconAnchor: [13, 13]
+    });
 
-    // Subtle grid
-    ctx.strokeStyle = '#10202a';
-    ctx.lineWidth = 1;
-    for (let i = 1; i < 6; i++) {
-      ctx.beginPath(); ctx.moveTo(w * i / 6, 0); ctx.lineTo(w * i / 6, h); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, h * i / 6); ctx.lineTo(w, h * i / 6); ctx.stroke();
-    }
-
-    if (this.points.length === 0) {
-      ctx.fillStyle = '#3a5a6a';
-      ctx.font = '12px monospace';
-      ctx.textAlign = 'center';
-      ctx.fillText('Waiting for GPS fix...', w / 2, h / 2);
-      return;
-    }
-
-    // Bounds
-    let minLat = Infinity, maxLat = -Infinity;
-    let minLon = Infinity, maxLon = -Infinity;
-    for (const p of this.points) {
-      if (p.lat < minLat) minLat = p.lat;
-      if (p.lat > maxLat) maxLat = p.lat;
-      if (p.lon < minLon) minLon = p.lon;
-      if (p.lon > maxLon) maxLon = p.lon;
-    }
-    let latRange = Math.max(maxLat - minLat, 1e-5);
-    let lonRange = Math.max(maxLon - minLon, 1e-5);
-
-    const centerLat = (minLat + maxLat) / 2;
-    const latCorr = Math.cos(centerLat * Math.PI / 180);
-    const dataAspect = (lonRange * latCorr) / latRange;
-    const canvasAspect = w / h;
-
-    let sLat, sLon;
-    const PAD = 0.12;
-    if (dataAspect > canvasAspect) {
-      sLon = (w * (1 - 2 * PAD)) / (lonRange * latCorr);
-      sLat = sLon * latCorr;
+    if (!this.marker) {
+      this.marker = L.marker(here, { icon: carIcon }).addTo(this.map);
     } else {
-      sLat = (h * (1 - 2 * PAD)) / latRange;
-      sLon = sLat / latCorr;
-    }
-
-    const cLat = (minLat + maxLat) / 2;
-    const cLon = (minLon + maxLon) / 2;
-
-    const project = (lat, lon) => [
-      w / 2 + (lon - cLon) * sLon,
-      h / 2 - (lat - cLat) * sLat
-    ];
-
-    // Glow underlay
-    if (this.points.length > 1) {
-      ctx.strokeStyle = 'rgba(56,229,160,0.18)';
-      ctx.lineWidth = 9;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      ctx.beginPath();
-      const [x0, y0] = project(this.points[0].lat, this.points[0].lon);
-      ctx.moveTo(x0, y0);
-      for (let i = 1; i < this.points.length; i++) {
-        const [x, y] = project(this.points[i].lat, this.points[i].lon);
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
-
-      // Main trail
-      ctx.strokeStyle = '#38e5a0';
-      ctx.lineWidth = 2.5;
-      ctx.beginPath();
-      ctx.moveTo(x0, y0);
-      for (let i = 1; i < this.points.length; i++) {
-        const [x, y] = project(this.points[i].lat, this.points[i].lon);
-        ctx.lineTo(x, y);
-      }
-      ctx.stroke();
+      this.marker.setLatLng(here);
     }
 
     // Start marker
-    const [sx, sy] = project(this.points[0].lat, this.points[0].lon);
-    ctx.fillStyle = '#38b6ff';
-    ctx.beginPath(); ctx.arc(sx, sy, 5, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#08121a'; ctx.lineWidth = 2; ctx.stroke();
+    if (!this.startMarker) {
+      const startIcon = L.divIcon({
+        className: 'start-marker',
+        html: `<div class="start-marker-inner"></div>`,
+        iconSize: [14, 14],
+        iconAnchor: [7, 7]
+      });
+      this.startMarker = L.marker(this.points[0] ? [this.points[0].lat, this.points[0].lon] : here,
+        { icon: startIcon }).addTo(this.map);
+    }
 
-    // Current marker with pulse
-    const last = this.points[this.points.length - 1];
-    const [lx, ly] = project(last.lat, last.lon);
-    const tNow = performance.now() / 400;
-    const pulseR = 6 + 6 * (0.5 + 0.5 * Math.sin(tNow));
-    ctx.fillStyle = 'rgba(255,216,102,0.28)';
-    ctx.beginPath(); ctx.arc(lx, ly, pulseR, 0, Math.PI * 2); ctx.fill();
-
-    ctx.fillStyle = '#ffd866';
-    ctx.beginPath(); ctx.arc(lx, ly, 5.5, 0, Math.PI * 2); ctx.fill();
-    ctx.strokeStyle = '#08121a'; ctx.lineWidth = 2; ctx.stroke();
-
-    // Labels
-    ctx.fillStyle = '#7fdcff';
-    ctx.font = '10px monospace';
-    ctx.textAlign = 'left'; ctx.textBaseline = 'top';
-    ctx.fillText(`PTS ${this.points.length}`, 6, 6);
-
-    ctx.textAlign = 'right';
-    ctx.fillText(`${(this.totalDistance / 1000).toFixed(3)} km`, w - 6, 6);
+    // Auto-fit only the first time, then follow
+    if (!this.locked) {
+      this.map.setView(here, 16);
+      this.locked = true;
+    } else if (this.follow) {
+      this.map.panTo(here, { animate: true, duration: 0.4 });
+    }
   }
 }
 
+// Haversine distance in meters
+function haversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
 // Haversine distance in meters
 function haversine(lat1, lon1, lat2, lon2) {
   const R = 6371000;
@@ -684,9 +669,21 @@ function haversine(lat1, lon1, lat2, lon2) {
    6. INSTANTIATE
    ================================================================== */
 const gauge = new SpeedGauge(document.getElementById('speedGauge'), 120);
-const trackMap = new TrackMap(document.getElementById('trackMap'));
+const trackMap = new TrackMap('map', { center: [29.5918, 52.5837], zoom: 14 });
 
 document.getElementById('clearMap').addEventListener('click', () => trackMap.clear());
+
+const followBtn = document.getElementById('followBtn');
+followBtn.addEventListener('click', () => {
+  const on = trackMap.toggleFollow();
+  followBtn.textContent = 'follow: ' + (on ? 'on' : 'off');
+  followBtn.classList.toggle('active', on);
+});
+followBtn.classList.add('active');
+
+// Make sure Leaflet recalculates the size after layout settles
+setTimeout(() => trackMap.map.invalidateSize(), 200);
+window.addEventListener('resize', () => trackMap.map.invalidateSize());
 
 /* ==================================================================
    7. SOCKET.IO — LIVE DATA

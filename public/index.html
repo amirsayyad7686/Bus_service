@@ -3,8 +3,10 @@
 <head>
 <meta charset="UTF-8">
 <title>MC60 Live Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <link rel="stylesheet" href="/style.css">
 <script src="/socket.io/socket.io.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script type="importmap">
 {
   "imports": {
@@ -34,9 +36,12 @@
 
     <div class="card map-card">
       <h2>Route
-        <button id="clearMap" class="mini">clear</button>
+        <span>
+          <button id="followBtn" class="mini">follow: on</button>
+          <button id="clearMap" class="mini">clear</button>
+        </span>
       </h2>
-      <canvas id="trackMap"></canvas>
+      <div id="map"></div>
     </div>
 
     <div class="card">
