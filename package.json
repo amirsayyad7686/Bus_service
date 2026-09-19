@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+     "push": "git add . && git commit -m \"auto deploy\" && git push"
   },
   "dependencies": {
     "express": "^4.19.2",
