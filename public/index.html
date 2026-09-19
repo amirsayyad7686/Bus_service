@@ -22,16 +22,9 @@
   <div id="conn" class="badge bad">offline</div>
 </header>
 
-<!-- Mobile-only tab switcher -->
-<nav id="tabs">
-  <button data-view="viewer" class="active">3D</button>
-  <button data-view="map-card">Map</button>
-  <button data-view="data">Data</button>
-</nav>
-
 <main>
 
-  <section id="viewer" data-view="viewer">
+  <section id="viewer">
     <canvas id="carCanvas"></canvas>
     <div id="viewerHint">drag · pinch · scroll</div>
   </section>
@@ -43,7 +36,7 @@
       <canvas id="speedGauge"></canvas>
     </div>
 
-    <div class="card map-card" data-view="map-card">
+    <div class="card map-card">
       <h2>
         <span>Route</span>
         <span>
@@ -54,7 +47,7 @@
       <div id="map"></div>
     </div>
 
-    <div class="card" data-view="data">
+    <div class="card">
       <h2>Position</h2>
       <div class="row"><span>Latitude</span><span id="lat">—</span></div>
       <div class="row"><span>Longitude</span><span id="lon">—</span></div>
@@ -62,28 +55,28 @@
       <div class="row"><span>Distance</span><span id="dist">—</span></div>
     </div>
 
-    <div class="card" data-view="data">
+    <div class="card">
       <h2>Orientation</h2>
       <div class="row"><span>Pitch</span><span id="pitch">—</span></div>
       <div class="row"><span>Roll</span><span id="roll">—</span></div>
       <div class="row"><span>Yaw</span><span id="yaw">—</span></div>
     </div>
 
-    <div class="card" data-view="data">
+    <div class="card">
       <h2>Gyroscope (°/s)</h2>
       <div class="row"><span>gx</span><span id="gx">—</span></div>
       <div class="row"><span>gy</span><span id="gy">—</span></div>
       <div class="row"><span>gz</span><span id="gz">—</span></div>
     </div>
 
-    <div class="card" data-view="data">
+    <div class="card">
       <h2>Accelerometer (g)</h2>
       <div class="row"><span>ax</span><span id="ax">—</span></div>
       <div class="row"><span>ay</span><span id="ay">—</span></div>
       <div class="row"><span>az</span><span id="az">—</span></div>
     </div>
 
-    <div class="card small" data-view="data">
+    <div class="card small">
       <div class="row"><span>Last update</span><span id="last">—</span></div>
       <div class="row"><span>Packets</span><span id="count">0</span></div>
     </div>

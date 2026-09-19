@@ -19,7 +19,6 @@ html, body {
   background: var(--bg);
   color: var(--text);
   overflow: hidden;
-  overscroll-behavior: none;
 }
 
 /* ================= HEADER ================= */
@@ -49,33 +48,7 @@ header h1 {
 .badge.good { background: #143a25; color: var(--accent); }
 .badge.bad  { background: #3a1414; color: var(--warn); }
 
-/* ================= MOBILE TABS (hidden on desktop) ================= */
-#tabs {
-  display: none;
-  background: #0e161d;
-  border-bottom: 1px solid var(--border);
-}
-
-#tabs button {
-  flex: 1;
-  background: transparent;
-  color: var(--muted);
-  border: none;
-  border-bottom: 2px solid transparent;
-  padding: 10px 6px;
-  font-family: monospace;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  cursor: pointer;
-  transition: color 0.15s, border-color 0.15s;
-}
-#tabs button.active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
-}
-
-/* ================= MAIN LAYOUT ================= */
+/* ================= DESKTOP LAYOUT ================= */
 main {
   display: grid;
   grid-template-columns: 1fr 360px;
@@ -86,7 +59,7 @@ main {
   position: relative;
   overflow: hidden;
   background: radial-gradient(ellipse at center, #101a24 0%, #05080b 100%);
-  touch-action: none;   /* let Three.js handle touch gestures */
+  touch-action: none;
 }
 
 #carCanvas {
@@ -106,13 +79,13 @@ main {
 
 #panel {
   overflow-y: auto;
-  overscroll-behavior: contain;
   padding: 10px;
   border-left: 1px solid var(--border);
   background: var(--panel);
   display: flex; flex-direction: column; gap: 10px;
 }
 
+/* ================= CARDS ================= */
 .card {
   border: 1px solid var(--border);
   border-radius: 8px;
@@ -173,9 +146,8 @@ main {
 
 /* ================= MAP ================= */
 .map-card {
-  flex: 1;
-  min-height: 280px;
   display: flex; flex-direction: column;
+  min-height: 300px;
 }
 #map {
   flex: 1;
@@ -238,88 +210,113 @@ main {
   main { grid-template-columns: 1fr 320px; }
 }
 
-/* ================= MOBILE ================= */
+/* ================= MOBILE — STACKED & SCROLLABLE ================= */
 @media (max-width: 860px) {
-  html, body { overflow: hidden; }
 
-  #tabs { display: flex; }
+  html, body {
+    height: auto;
+    min-height: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;            /* page scrolls */
+    -webkit-overflow-scrolling: touch;
+  }
+
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: linear-gradient(180deg, #0e161e 0%, #0b1015 100%);
+  }
 
   main {
-    grid-template-columns: 1fr;
-    height: calc(100vh - 44px - 42px);   /* header + tabs */
-    position: relative;
-  }
-
-  /* In mobile, viewer and panel occupy the same grid cell */
-  #viewer,
-  #panel {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  /* Hide everything by default */
-  #viewer[data-hidden="true"],
-  #panel[data-hidden="true"] {
-    display: none;
-  }
-
-  #viewer {
-    height: 100%;
-    border-right: none;
-  }
-
-  #panel {
-    height: 100%;
-    border-left: none;
-    padding: 8px;
-    gap: 8px;
-  }
-
-  /* Only show the panels that match the active tab */
-  [data-view] { display: none; }
-  body[data-tab="viewer"] #viewer   { display: block; }
-  body[data-tab="map-card"] .map-card { display: flex; }
-  body[data-tab="data"] [data-view="data"] { display: block; }
-
-  /* When Map or Data tab is active, show the panel and hide the viewer */
-  body[data-tab="map-card"] #viewer,
-  body[data-tab="data"]     #viewer {
-    display: none;
-  }
-  body[data-tab="map-card"] #panel,
-  body[data-tab="data"]     #panel {
     display: flex;
+    flex-direction: column;
+    height: auto;
+    min-height: 0;
   }
 
-  /* Gauge goes above the map / data cards */
-  body[data-tab="map-card"] .gauge-card,
-  body[data-tab="data"]     .gauge-card { display: block; }
+  /* 3D viewer: fixed height, full width, at the top */
+  #viewer {
+    width: 100%;
+    height: 45vh;
+    min-height: 260px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+  }
 
-  .card { padding: 8px; border-radius: 6px; }
-  .card h2 { font-size: 10px; }
-  .row { font-size: 13px; padding: 5px 0; }
+  /* Panel: normal block, all cards stacked */
+  #panel {
+    width: 100%;
+    height: auto;
+    overflow: visible;
+    border-left: none;
+    padding: 10px;
+    gap: 10px;
+  }
 
-  .gauge-card #speedGauge { height: 150px; }
+  /* Give each card its own block feel with a bit more room */
+  .card {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 8px;
+  }
 
-  .map-card { min-height: unset; flex: 1; }
-  #map { min-height: 300px; }
+  .card h2 {
+    font-size: 11px;
+    margin-bottom: 8px;
+  }
+
+  /* Gauge: full width, a bit shorter on phones */
+  .gauge-card #speedGauge {
+    height: 150px;
+  }
+
+  /* Map: big enough to actually use */
+  .map-card {
+    min-height: 340px;
+  }
+  #map {
+    min-height: 300px;
+  }
+
+  /* Bigger rows for touch */
+  .row {
+    font-size: 13px;
+    padding: 6px 0;
+  }
 
   /* Bigger tap targets */
-  .mini { padding: 6px 10px; font-size: 11px; }
+  .mini {
+    padding: 6px 10px;
+    font-size: 11px;
+  }
 }
 
 /* ================= VERY SMALL PHONES ================= */
 @media (max-width: 400px) {
   header h1 { font-size: 12px; letter-spacing: .5px; }
   .badge { padding: 3px 8px; font-size: 10px; }
-  #tabs button { font-size: 11px; padding: 8px 4px; }
+
+  #viewer {
+    height: 40vh;
+    min-height: 220px;
+  }
+
   .gauge-card #speedGauge { height: 130px; }
-  #map { min-height: 220px; }
+  .map-card { min-height: 280px; }
+  #map { min-height: 240px; }
+
+  .card { padding: 8px 10px; }
+  .row { font-size: 12px; padding: 5px 0; }
 }
 
 /* ================= LANDSCAPE PHONE ================= */
 @media (max-width: 860px) and (orientation: landscape) {
-  main { height: calc(100vh - 44px - 42px); }
+  #viewer {
+    height: 70vh;
+    min-height: 220px;
+  }
   .gauge-card #speedGauge { height: 120px; }
-  #map { min-height: 180px; }
+  .map-card { min-height: 260px; }
+  #map { min-height: 220px; }
 }
