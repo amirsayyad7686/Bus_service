@@ -661,7 +661,7 @@ function haversine(lat1, lon1, lat2, lon2) {
    ================================================================== */
 const gauge = new SpeedGauge(document.getElementById('speedGauge'), 120);
 const trackMap = new TrackMap('map', { center: [29.5918, 52.5837], zoom: 14 });
-
+window.trackMap = trackMap;   // expose for the tab switcher
 document.getElementById('clearMap').addEventListener('click', () => trackMap.clear());
 
 const followBtn = document.getElementById('followBtn');
@@ -744,7 +744,43 @@ function setText(id, val, decimals = 2, unit = '') {
   if (!el) return;
   el.textContent = (typeof val === 'number' ? val.toFixed(decimals) : val) + unit;
 }
+/* ==================================================================
+   10. MOBILE TAB SWITCHER
+   ================================================================== */
+(function setupTabs() {
+  const tabs = document.querySelectorAll('#tabs button');
+  if (!tabs.length) return;
 
+  function setTab(name) {
+    document.body.setAttribute('data-tab', name);
+    tabs.forEach(b => b.classList.toggle('active', b.dataset.view === name));
+
+    // Leaflet needs a size recalculation when its container becomes visible
+    if (name === 'map-card' && window.trackMap && window.trackMap.map) {
+      setTimeout(() => window.trackMap.map.invalidateSize(), 60);
+    }
+  }
+
+  // Default tab on mobile
+  if (window.matchMedia('(max-width: 860px)').matches) {
+    setTab('viewer');
+  } else {
+    document.body.removeAttribute('data-tab');
+  }
+
+  tabs.forEach(btn => {
+    btn.addEventListener('click', () => setTab(btn.dataset.view));
+  });
+
+  // Re-evaluate when the viewport crosses the breakpoint
+  window.addEventListener('resize', () => {
+    if (window.matchMedia('(max-width: 860px)').matches) {
+      if (!document.body.hasAttribute('data-tab')) setTab('viewer');
+    } else {
+      document.body.removeAttribute('data-tab');
+    }
+  });
+})();
 /* ==================================================================
    8. RENDER LOOP
    ================================================================== */
@@ -790,3 +826,6 @@ function onResize() {
 window.addEventListener('resize', onResize);
 onResize();
 animate();
+
+
+

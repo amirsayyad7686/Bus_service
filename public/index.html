@@ -1,20 +1,3 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>MC60 Live Tracker</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="stylesheet" href="/style.css">
-<script src="/socket.io/socket.io.js"></script>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-<script type="importmap">
-{
-  "imports": {
-    "three": "https://unpkg.com/three@0.160.0/build/three.module.js"
-  }
-}
-</script>
-</head>
 <body>
 
 <header>
@@ -22,29 +5,39 @@
   <div id="conn" class="badge bad">offline</div>
 </header>
 
+<!-- Mobile-only tab switcher -->
+<nav id="tabs">
+  <button data-view="viewer" class="active">3D</button>
+  <button data-view="map-card">Map</button>
+  <button data-view="data">Data</button>
+</nav>
+
 <main>
-  <section id="viewer">
+
+  <section id="viewer" data-view="viewer">
     <canvas id="carCanvas"></canvas>
-    <div id="viewerHint">drag to orbit · scroll to zoom</div>
+    <div id="viewerHint">drag · pinch · scroll</div>
   </section>
 
   <aside id="panel">
-    <div class="card">
+
+    <div class="card gauge-card">
       <h2>Speed</h2>
       <canvas id="speedGauge"></canvas>
     </div>
 
-    <div class="card map-card">
-      <h2>Route
+    <div class="card map-card" data-view="map-card">
+      <h2>
+        <span>Route</span>
         <span>
-          <button id="followBtn" class="mini">follow: on</button>
+          <button id="followBtn" class="mini active">follow: on</button>
           <button id="clearMap" class="mini">clear</button>
         </span>
       </h2>
       <div id="map"></div>
     </div>
 
-    <div class="card">
+    <div class="card" data-view="data">
       <h2>Position</h2>
       <div class="row"><span>Latitude</span><span id="lat">—</span></div>
       <div class="row"><span>Longitude</span><span id="lon">—</span></div>
@@ -52,34 +45,35 @@
       <div class="row"><span>Distance</span><span id="dist">—</span></div>
     </div>
 
-    <div class="card">
+    <div class="card" data-view="data">
       <h2>Orientation</h2>
       <div class="row"><span>Pitch</span><span id="pitch">—</span></div>
       <div class="row"><span>Roll</span><span id="roll">—</span></div>
       <div class="row"><span>Yaw</span><span id="yaw">—</span></div>
     </div>
 
-    <div class="card">
+    <div class="card" data-view="data">
       <h2>Gyroscope (°/s)</h2>
       <div class="row"><span>gx</span><span id="gx">—</span></div>
       <div class="row"><span>gy</span><span id="gy">—</span></div>
       <div class="row"><span>gz</span><span id="gz">—</span></div>
     </div>
 
-    <div class="card">
+    <div class="card" data-view="data">
       <h2>Accelerometer (g)</h2>
       <div class="row"><span>ax</span><span id="ax">—</span></div>
       <div class="row"><span>ay</span><span id="ay">—</span></div>
       <div class="row"><span>az</span><span id="az">—</span></div>
     </div>
 
-    <div class="card small">
+    <div class="card small" data-view="data">
       <div class="row"><span>Last update</span><span id="last">—</span></div>
       <div class="row"><span>Packets</span><span id="count">0</span></div>
     </div>
+
   </aside>
+
 </main>
 
 <script type="module" src="/app.js"></script>
 </body>
-</html>
