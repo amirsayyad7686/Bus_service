@@ -661,7 +661,6 @@ function haversine(lat1, lon1, lat2, lon2) {
    ================================================================== */
 const gauge = new SpeedGauge(document.getElementById('speedGauge'), 120);
 const trackMap = new TrackMap('map', { center: [29.5918, 52.5837], zoom: 14 });
-window.trackMap = trackMap;   // expose for the tab switcher
 document.getElementById('clearMap').addEventListener('click', () => trackMap.clear());
 
 const followBtn = document.getElementById('followBtn');
