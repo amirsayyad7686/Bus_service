@@ -5,7 +5,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 
 // ---------- Config ----------
-const HTTP_PORT = 5101;
+const HTTP_PORT = 5201;
 const TCP_PORT  = 5202;
 const EXPECTED_CLIENT_ID = 'client23832';
 
