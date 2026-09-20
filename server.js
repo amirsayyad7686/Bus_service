@@ -186,7 +186,6 @@ app.get('/api/cam', (req, res) => {
   });
 });
 
-
 const CAM_TCP_PORT = 5203;   // ESP32-CAM connects here
 
 // -------- Camera TCP receiver --------
@@ -251,4 +250,10 @@ const camServer = net.createServer((socket) => {
 
 camServer.listen(CAM_TCP_PORT, '0.0.0.0', () => {
   console.log(`[CAM] TCP frame receiver on port ${CAM_TCP_PORT}`);
+});
+
+// ---------- Start HTTP ----------
+server.listen(HTTP_PORT, '0.0.0.0', () => {
+  console.log(`[HTTP] dashboard at http://localhost:${HTTP_PORT}`);
+  console.log(`[HTTP] waiting for MC60 TCP data on port ${TCP_PORT}`);
 });
