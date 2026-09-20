@@ -187,9 +187,68 @@ app.get('/api/cam', (req, res) => {
 });
 
 
+const CAM_TCP_PORT = 5203;   // ESP32-CAM connects here
 
-// ---------- Start HTTP ----------
-server.listen(HTTP_PORT, '0.0.0.0', () => {
-  console.log(`[HTTP] dashboard at http://localhost:${HTTP_PORT}`);
-  console.log(`[HTTP] waiting for MC60 TCP data on port ${TCP_PORT}`);
+// -------- Camera TCP receiver --------
+const camServer = net.createServer((socket) => {
+  const addr = `${socket.remoteAddress}:${socket.remotePort}`;
+  console.log(`[CAM] TCP client connected: ${addr}`);
+  socket.setNoDelay(true);
+
+  let buf = Buffer.alloc(0);
+  let framesThisSecond = 0;
+  let fpsWindowStart = Date.now();
+
+  socket.on('data', (data) => {
+    buf = Buffer.concat([buf, data]);
+
+    // Parse length-prefixed frames
+    while (buf.length >= 4) {
+      const len = buf.readUInt32LE(0);
+      if (len === 0 || len > 2_000_000) {
+        // sanity check — probably out of sync, reset
+        console.warn(`[CAM] bad frame length ${len}, resetting buffer`);
+        buf = Buffer.alloc(0);
+        return;
+      }
+      if (buf.length < 4 + len) break;    // wait for more bytes
+
+      const jpeg = buf.subarray(4, 4 + len);
+      buf = buf.subarray(4 + len);
+
+      // ---- New frame ----
+      latestFrame   = jpeg;
+      lastFrameTime = Date.now();
+
+      framesThisSecond++;
+      const elapsed = Date.now() - fpsWindowStart;
+      if (elapsed >= 1000) {
+        camFps = framesThisSecond * 1000 / elapsed;
+        framesThisSecond = 0;
+        fpsWindowStart = Date.now();
+      }
+
+      // Push to every open MJPEG subscriber
+      const header = Buffer.from(
+        `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`
+      );
+      const footer = Buffer.from('\r\n');
+      for (const s of frameSubscribers) {
+        try {
+          s.write(header);
+          s.write(jpeg);
+          s.write(footer);
+        } catch (e) {
+          frameSubscribers.delete(s);
+        }
+      }
+    }
+  });
+
+  socket.on('error', (err) => console.error(`[CAM] error from ${addr}:`, err.message));
+  socket.on('close', () => console.log(`[CAM] client disconnected: ${addr}`));
+});
+
+camServer.listen(CAM_TCP_PORT, '0.0.0.0', () => {
+  console.log(`[CAM] TCP frame receiver on port ${CAM_TCP_PORT}`);
 });

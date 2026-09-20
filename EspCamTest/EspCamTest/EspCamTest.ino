@@ -1,23 +1,21 @@
 #include "esp_camera.h"
 #include <WiFi.h>
-#include <HTTPClient.h>
+#include <WiFiClient.h>
 
 // ==================== WiFi ====================
-const char* WIFI_SSID = "Amir34";     // 2.4 GHz only
+const char* WIFI_SSID = "Amir34";
 const char* WIFI_PASS = "24683579";
 
-// ==================== Node server ====================
-// LAN:    http://192.168.1.100:3000/frame
-// Public: http://yourserver.com/frame
-const char* SERVER_URL = "http://181.41.194.124:5201/frame";
+// ==================== Node server (raw TCP, NOT HTTP) ====================
+const char* SERVER_HOST = "181.41.194.124";
+const uint16_t SERVER_PORT = 5203;              // <- new TCP port for frames
 
 // ==================== Camera tuning ====================
-// Lower number = better quality, bigger file
-// Higher number = lower quality, smaller file (better for slower links)
-#define JPEG_QUALITY   12      // 10–15 recommended
-#define FRAME_INTERVAL 200     // ms between frames (200 = 5 FPS)
+// Trade-off: lower resolution / higher quality number = faster frames
+#define FRAME_SIZE_       FRAMESIZE_VGA          // VGA(640x480) | QVGA(320x240) | CIF(400x296)
+#define JPEG_QUALITY_     12                     // 10=high, 30=low (higher = smaller/faster)
 
-// ==================== AI-Thinker ESP32-CAM pin map ====================
+// ==================== AI-Thinker ESP32-CAM pins ====================
 #define PWDN_GPIO_NUM     32
 #define RESET_GPIO_NUM    -1
 #define XCLK_GPIO_NUM      0
@@ -36,9 +34,12 @@ const char* SERVER_URL = "http://181.41.194.124:5201/frame";
 #define PCLK_GPIO_NUM     22
 
 // ==================== State ====================
-unsigned long lastFrame = 0;
+WiFiClient camSocket;
 unsigned long frameCount = 0;
 unsigned long failCount  = 0;
+unsigned long lastStat   = 0;
+unsigned long bytesSent  = 0;
+unsigned long startTime  = 0;
 
 // ==================== Camera init ====================
 bool initCamera() {
@@ -61,16 +62,18 @@ bool initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;
+  config.xclk_freq_hz = 20000000;                // 20 MHz — stable
   config.pixel_format = PIXFORMAT_JPEG;
 
   if (psramFound()) {
-    config.frame_size   = FRAMESIZE_VGA;    // 640×480
-    config.jpeg_quality = JPEG_QUALITY;
-    config.fb_count     = 2;
+    config.frame_size   = FRAME_SIZE_;
+    config.jpeg_quality = JPEG_QUALITY_;
+    config.fb_count     = 2;                     // double-buffer for smoothness
+    config.fb_location  = CAMERA_FB_IN_PSRAM;
+    config.grab_mode    = CAMERA_GRAB_LATEST;    // always newest frame
   } else {
-    config.frame_size   = FRAMESIZE_QVGA;   // 320×240 fallback
-    config.jpeg_quality = JPEG_QUALITY;
+    config.frame_size   = FRAMESIZE_QVGA;
+    config.jpeg_quality = JPEG_QUALITY_;
     config.fb_count     = 1;
   }
 
@@ -81,7 +84,6 @@ bool initCamera() {
   }
   Serial.println("[CAM] init OK");
 
-  // Optional tweaks
   sensor_t *s = esp_camera_sensor_get();
   s->set_brightness(s, 0);
   s->set_contrast(s, 0);
@@ -89,32 +91,57 @@ bool initCamera() {
   s->set_whitebal(s, 1);
   s->set_exposure_ctrl(s, 1);
   s->set_gain_ctrl(s, 1);
+  s->set_awb_gain(s, 1);
   return true;
 }
 
-// ==================== POST one JPEG ====================
-bool postFrame(camera_fb_t *fb) {
-  if (WiFi.status() != WL_CONNECTED) return false;
+// ==================== Socket connect (with reconnect) ====================
+bool ensureSocket() {
+  if (camSocket.connected()) return true;
 
-  HTTPClient http;
-  http.begin(SERVER_URL);
-  http.setTimeout(3000);
-  http.addHeader("Content-Type", "image/jpeg");
-
-  int code = http.POST(fb->buf, fb->len);
-  http.end();
-
-  if (code == 200 || code == 201) return true;
-
-  Serial.printf("[POST] failed, HTTP %d\n", code);
+  camSocket.stop();
+  Serial.printf("[TCP] connecting to %s:%u ... ", SERVER_HOST, SERVER_PORT);
+  if (camSocket.connect(SERVER_HOST, SERVER_PORT, 3000)) {
+    camSocket.setNoDelay(true);
+    Serial.println("OK");
+    return true;
+  }
+  Serial.println("FAILED");
   return false;
+}
+
+// ==================== Send one JPEG with length prefix ====================
+bool sendFrame(camera_fb_t *fb) {
+  if (!ensureSocket()) return false;
+
+  // 4-byte little-endian length prefix
+  uint32_t len = fb->len;
+  uint8_t header[4] = {
+    (uint8_t)(len & 0xFF),
+    (uint8_t)((len >> 8) & 0xFF),
+    (uint8_t)((len >> 16) & 0xFF),
+    (uint8_t)((len >> 24) & 0xFF)
+  };
+
+  // Write header + payload. TCP will buffer; the OS handles batching.
+  size_t w1 = camSocket.write(header, 4);
+  size_t w2 = camSocket.write(fb->buf, fb->len);
+
+  if (w1 != 4 || w2 != fb->len) {
+    Serial.println("[TCP] short write — reconnecting");
+    camSocket.stop();
+    return false;
+  }
+
+  bytesSent += fb->len;
+  return true;
 }
 
 // ==================== Setup ====================
 void setup() {
   Serial.begin(115200);
   delay(200);
-  Serial.println("\n=== ESP32-CAM Streamer ===");
+  Serial.println("\n=== ESP32-CAM TCP Streamer ===");
 
   if (!initCamera()) {
     Serial.println("Camera failed — rebooting in 5 s");
@@ -123,7 +150,8 @@ void setup() {
   }
 
   WiFi.mode(WIFI_STA);
-  WiFi.setSleep(false);           // important for camera throughput
+  WiFi.setSleep(false);                            // CRITICAL: disables power save
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);
   WiFi.begin(WIFI_SSID, WIFI_PASS);
 
   Serial.printf("Connecting to %s", WIFI_SSID);
@@ -140,41 +168,42 @@ void setup() {
   }
 
   Serial.printf("\nWiFi OK  IP: %s\n", WiFi.localIP().toString().c_str());
-  Serial.printf("Streaming to: %s\n", SERVER_URL);
-  Serial.printf("Target: %d ms between frames (~%d FPS)\n",
-                FRAME_INTERVAL, 1000 / FRAME_INTERVAL);
+  Serial.printf("Streaming to: tcp://%s:%u\n", SERVER_HOST, SERVER_PORT);
+
+  startTime = millis();
 }
 
-// ==================== Loop ====================
+// ==================== Loop — no artificial delay ====================
 void loop() {
-  // Reconnect WiFi if dropped
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[WiFi] reconnecting...");
+    Serial.println("[WiFi] lost — reconnecting");
     WiFi.reconnect();
-    delay(2000);
+    delay(1000);
     return;
   }
-
-  if (millis() - lastFrame < FRAME_INTERVAL) return;
-  lastFrame = millis();
 
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) {
-    Serial.println("[CAM] capture failed");
+    delay(10);
     return;
   }
 
-  bool ok = postFrame(fb);
-  if (ok) {
+  if (sendFrame(fb)) {
     frameCount++;
   } else {
     failCount++;
   }
 
-  if (frameCount % 20 == 0 && frameCount > 0) {
-    Serial.printf("[STAT] sent=%lu fail=%lu size=%u bytes heap=%u\n",
-                  frameCount, failCount, fb->len, ESP.getFreeHeap());
-  }
-
   esp_camera_fb_return(fb);
+
+  // Stats once per second
+  unsigned long now = millis();
+  if (now - lastStat >= 1000) {
+    float sec = (now - startTime) / 1000.0;
+    float fps = frameCount / sec;
+    float kbps = (bytesSent / 1024.0) / sec;
+    Serial.printf("[STAT] fps=%.1f  frames=%lu  fail=%lu  %.0f KB/s  heap=%u\n",
+                  fps, frameCount, failCount, kbps, ESP.getFreeHeap());
+    lastStat = now;
+  }
 }
