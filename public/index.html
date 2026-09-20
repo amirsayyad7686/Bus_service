@@ -18,87 +18,107 @@
 </head>
 <body>
 
-<header>
-  <h1>MC60 Live Tracker</h1>
-  <div id="conn" class="badge bad">offline</div>
-</header>
+<div class="app-container">
+  <!-- Header -->
+  <header class="app-header">
+    <div class="header-title">
+      <span class="satellite-icon">🛰</span>
+      <span class="status-dot"></span>
+      <h1>MC60 Live Tracker</h1>
+    </div>
+    <div id="conn" class="badge-status online">
+      <span class="dot"></span> Online
+    </div>
+  </header>
 
-<main>
+  <!-- Section 1: 3D ADAS / Radar Viewport -->
+  <section class="hud-card viewer-card">
+    <!-- Top-Left Floating Badge -->
+    <div class="hud-badge top-left">
+      <div class="hud-badge-icon">📍</div>
+      <div class="hud-badge-text">
+        <div class="hud-row">Lat: <span id="lat">29.6312</span></div>
+        <div class="hud-row">Lon: <span id="lon">52.5387</span></div>
+      </div>
+      <div class="gps-tag" id="fixTag">📶 GPS</div>
+    </div>
 
-  <section id="viewer">
+    <!-- Top-Right Legend -->
+    <div class="hud-badge top-right">
+      <div class="legend-item"><span class="legend-dot cyan"></span> Vehicles</div>
+      <div class="legend-item"><span class="legend-dot green"></span> Pedestrians</div>
+      <div class="legend-item"><span class="legend-dot teal"></span> Obstacles</div>
+      <div class="legend-item"><span class="legend-dot mint"></span> Safe Zone</div>
+    </div>
+
     <canvas id="carCanvas"></canvas>
-    <div id="viewerHint">drag · pinch · scroll</div>
   </section>
 
-  <aside id="panel">
-
-    <div class="card gauge-card">
-      <h2>Speed</h2>
-      <canvas id="speedGauge"></canvas>
+  <!-- Section 2: Speedometer & Telemetry Indicators -->
+  <section class="hud-card speed-card">
+    <div class="speed-left">
+      <div class="card-tag">SPEED</div>
+      <div class="gauge-wrapper">
+        <canvas id="speedGauge"></canvas>
+      </div>
     </div>
-<div class="card cam-card">
-  <h2>
-    <span>Camera</span>
-    <span>
-      <span id="camFps" class="cam-stat">— fps</span>
-      <button id="camPause" class="mini">pause</button>
-      <button id="camFull" class="mini">full</button>
-    </span>
-  </h2>
-  <div id="camWrap">
-    <img id="camStream" src="/stream" alt="camera stream"
-         onerror="this.style.opacity=0.3">
-    <div id="camOverlay">waiting for camera…</div>
-  </div>
-</div>
-    <div class="card map-card">
-      <h2>
-        <span>Route</span>
-        <span>
-          <button id="followBtn" class="mini active">follow: on</button>
-          <button id="clearMap" class="mini">clear</button>
-        </span>
-      </h2>
+
+    <div class="metrics-right">
+      <div class="metric-item">
+        <div class="metric-icon-circle">
+          <svg viewBox="0 0 24 24"><path d="M12 2L4.5 20.29l.71.71L12 18l6.79 3 .71-.71z"/></svg>
+        </div>
+        <div class="metric-info">
+          <span class="metric-label">Direction</span>
+          <span class="metric-val" id="directionVal">NE <span class="sub">(42°)</span></span>
+        </div>
+      </div>
+
+      <div class="metric-item">
+        <div class="metric-icon-circle">
+          <svg viewBox="0 0 24 24"><path d="M14 6l-3.8 5.7 2.3 3.5L9 21H3l8-12 3 4.5 4-6L22 17h-4"/></svg>
+        </div>
+        <div class="metric-info">
+          <span class="metric-label">Altitude</span>
+          <span class="metric-val" id="altVal">120 m</span>
+        </div>
+      </div>
+
+      <div class="metric-item">
+        <div class="metric-icon-circle">
+          <svg viewBox="0 0 24 24"><path d="M12 2a10 10 0 1010 10A10 10 0 0012 2zm1 14.5a1.5 1.5 0 111.5-1.5 1.5 1.5 0 01-1.5 1.5zm2.85-6.15l-3.35 3.35a2.46 2.46 0 00-1 .3l2.85-5.15z"/></svg>
+        </div>
+        <div class="metric-info">
+          <span class="metric-label">Acceleration</span>
+          <span class="metric-val" id="accVal">0.12 g</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Section 3: Leaflet Route Map -->
+  <section class="hud-card route-card">
+    <div class="route-header">
+      <div class="card-tag">
+        <span class="icon">📍</span> ROUTE
+      </div>
+      <div class="route-controls">
+        <button id="followBtn" class="pill-btn active">
+          <svg viewBox="0 0 24 24" width="13" height="13"><circle cx="12" cy="12" r="7" stroke="currentColor" fill="none" stroke-width="2"/><path d="M12 2v3m0 14v3M2 12h3m14 0h3" stroke="currentColor" stroke-width="2"/></svg>
+          FOLLOW: ON
+        </button>
+        <button id="clearMap" class="pill-btn">
+          <svg viewBox="0 0 24 24" width="13" height="13"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
+          CLEAR
+        </button>
+      </div>
+    </div>
+
+    <div class="map-wrapper">
       <div id="map"></div>
     </div>
-
-    <div class="card">
-      <h2>Position</h2>
-      <div class="row"><span>Latitude</span><span id="lat">—</span></div>
-      <div class="row"><span>Longitude</span><span id="lon">—</span></div>
-      <div class="row"><span>GPS fix</span><span id="fix" class="val bad">NO</span></div>
-      <div class="row"><span>Distance</span><span id="dist">—</span></div>
-    </div>
-
-    <div class="card">
-      <h2>Orientation</h2>
-      <div class="row"><span>Pitch</span><span id="pitch">—</span></div>
-      <div class="row"><span>Roll</span><span id="roll">—</span></div>
-      <div class="row"><span>Yaw</span><span id="yaw">—</span></div>
-    </div>
-
-    <div class="card">
-      <h2>Gyroscope (°/s)</h2>
-      <div class="row"><span>gx</span><span id="gx">—</span></div>
-      <div class="row"><span>gy</span><span id="gy">—</span></div>
-      <div class="row"><span>gz</span><span id="gz">—</span></div>
-    </div>
-
-    <div class="card">
-      <h2>Accelerometer (g)</h2>
-      <div class="row"><span>ax</span><span id="ax">—</span></div>
-      <div class="row"><span>ay</span><span id="ay">—</span></div>
-      <div class="row"><span>az</span><span id="az">—</span></div>
-    </div>
-
-    <div class="card small">
-      <div class="row"><span>Last update</span><span id="last">—</span></div>
-      <div class="row"><span>Packets</span><span id="count">0</span></div>
-    </div>
-
-  </aside>
-
-</main>
+  </section>
+</div>
 
 <script type="module" src="/app.js"></script>
 </body>

@@ -12,8 +12,8 @@ const uint16_t SERVER_PORT = 5203;              // <- new TCP port for frames
 
 // ==================== Camera tuning ====================
 // Trade-off: lower resolution / higher quality number = faster frames
-#define FRAME_SIZE_       FRAMESIZE_VGA          // VGA(640x480) | QVGA(320x240) | CIF(400x296)
-#define JPEG_QUALITY_     12                     // 10=high, 30=low (higher = smaller/faster)
+#define FRAME_SIZE_       FRAMESIZE_QVGA          // VGA(640x480) | QVGA(320x240) | CIF(400x296)
+#define JPEG_QUALITY_     20                     // 10=high, 30=low (higher = smaller/faster)
 
 // ==================== AI-Thinker ESP32-CAM pins ====================
 #define PWDN_GPIO_NUM     32
@@ -62,7 +62,7 @@ bool initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 20000000;                // 20 MHz — stable
+  config.xclk_freq_hz = 24000000;                // 20 MHz — stable
   config.pixel_format = PIXFORMAT_JPEG;
 
   if (psramFound()) {
