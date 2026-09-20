@@ -828,3 +828,66 @@ animate();
 
 
 
+/* ==================================================================
+   11. CAMERA CONTROLS
+   ================================================================== */
+(function setupCamera() {
+  const img      = document.getElementById('camStream');
+  const overlay  = document.getElementById('camOverlay');
+  const fpsEl    = document.getElementById('camFps');
+  const pauseBtn = document.getElementById('camPause');
+  const fullBtn  = document.getElementById('camFull');
+  const wrap     = document.getElementById('camWrap');
+  if (!img) return;
+
+  let paused = false;
+
+  // Hide overlay once a frame loads
+  img.addEventListener('load', () => overlay.classList.add('hidden'));
+  img.addEventListener('error', () => overlay.classList.remove('hidden'));
+
+  // Pause / resume the stream (drop the HTTP connection to save bandwidth)
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused;
+    if (paused) {
+      img.src = '';
+      overlay.textContent = 'paused';
+      overlay.classList.remove('hidden');
+      pauseBtn.textContent = 'play';
+      pauseBtn.classList.add('active');
+    } else {
+      img.src = '/stream?t=' + Date.now();
+      overlay.textContent = 'waiting for camera…';
+      pauseBtn.textContent = 'pause';
+      pauseBtn.classList.remove('active');
+    }
+  });
+
+  // Fullscreen toggle
+  fullBtn.addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else wrap.requestFullscreen?.();
+  });
+
+  // Poll FPS + last-frame age from the server
+  async function pollCam() {
+    try {
+      const r = await fetch('/api/cam');
+      const j = await r.json();
+      if (!j.hasFrame) {
+        fpsEl.textContent = 'no signal';
+        fpsEl.style.color = 'var(--warn)';
+      } else if (j.lastFrameAge > 3000) {
+        fpsEl.textContent = 'stalled';
+        fpsEl.style.color = 'var(--warn)';
+      } else {
+        fpsEl.textContent = j.fps.toFixed(1) + ' fps';
+        fpsEl.style.color = 'var(--accent)';
+      }
+    } catch (e) {
+      fpsEl.textContent = '—';
+    }
+    setTimeout(pollCam, 1500);
+  }
+  pollCam();
+})();

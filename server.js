@@ -5,7 +5,7 @@ const express = require('express');
 const { Server } = require('socket.io');
 
 // ---------- Config ----------
-const HTTP_PORT = 3000;
+const HTTP_PORT = 5101;
 const TCP_PORT  = 5202;
 const EXPECTED_CLIENT_ID = 'client23832';
 
@@ -95,6 +95,98 @@ io.on('connection', (sock) => {
   if (latest) sock.emit('telemetry', latest);
   sock.on('disconnect', () => console.log(`[WS] browser disconnected: ${sock.id}`));
 });
+
+
+
+// --------------------------------------------------------------
+//  CAMERA STREAM
+// --------------------------------------------------------------
+let latestFrame = null;              // Buffer of the last JPEG
+let lastFrameTime = 0;
+const frameSubscribers = new Set();  // open MJPEG responses
+let camFps = 0;
+let camFrameCounter = 0;
+let camFpsWindowStart = Date.now();
+
+// POST /frame — ESP32-CAM sends raw JPEG bytes here
+app.post(
+  '/frame',
+  express.raw({ type: 'image/jpeg', limit: '4mb' }),
+  (req, res) => {
+    if (!req.body || !Buffer.isBuffer(req.body) || req.body.length === 0) {
+      return res.status(400).send('empty body');
+    }
+    latestFrame   = req.body;
+    lastFrameTime = Date.now();
+
+    // FPS tracking
+    camFrameCounter++;
+    const elapsed = Date.now() - camFpsWindowStart;
+    if (elapsed >= 1000) {
+      camFps = camFrameCounter * 1000 / elapsed;
+      camFrameCounter = 0;
+      camFpsWindowStart = Date.now();
+    }
+
+    // Push to all open MJPEG subscribers
+    const header = Buffer.from(
+      `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${latestFrame.length}\r\n\r\n`
+    );
+    const footer = Buffer.from('\r\n');
+    for (const s of frameSubscribers) {
+      try {
+        s.write(header);
+        s.write(latestFrame);
+        s.write(footer);
+      } catch (e) {
+        frameSubscribers.delete(s);
+      }
+    }
+
+    res.sendStatus(200);
+  }
+);
+
+// GET /stream — MJPEG stream for browsers
+app.get('/stream', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
+    'Cache-Control': 'no-store, no-cache, must-revalidate',
+    'Pragma': 'no-cache',
+    'Connection': 'close'
+  });
+
+  // Send the latest frame immediately so the <img> shows something
+  if (latestFrame) {
+    res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${latestFrame.length}\r\n\r\n`);
+    res.write(latestFrame);
+    res.write(`\r\n`);
+  }
+
+  frameSubscribers.add(res);
+  req.on('close', () => frameSubscribers.delete(res));
+});
+
+// GET /frame.jpg — latest still image (handy for debugging)
+app.get('/frame.jpg', (req, res) => {
+  if (!latestFrame) return res.status(204).send();
+  res.set('Content-Type', 'image/jpeg');
+  res.set('Cache-Control', 'no-store');
+  res.send(latestFrame);
+});
+
+// GET /api/cam — status (last frame time, FPS, subscribers)
+app.get('/api/cam', (req, res) => {
+  res.json({
+    hasFrame:     !!latestFrame,
+    lastFrameAge: lastFrameTime ? (Date.now() - lastFrameTime) : null,
+    fps:          Number(camFps.toFixed(2)),
+    subscribers:  frameSubscribers.size,
+    frameBytes:   latestFrame ? latestFrame.length : 0
+  });
+});
+
+
 
 // ---------- Start HTTP ----------
 server.listen(HTTP_PORT, '0.0.0.0', () => {

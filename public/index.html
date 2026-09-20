@@ -36,7 +36,21 @@
       <h2>Speed</h2>
       <canvas id="speedGauge"></canvas>
     </div>
-
+<div class="card cam-card">
+  <h2>
+    <span>Camera</span>
+    <span>
+      <span id="camFps" class="cam-stat">— fps</span>
+      <button id="camPause" class="mini">pause</button>
+      <button id="camFull" class="mini">full</button>
+    </span>
+  </h2>
+  <div id="camWrap">
+    <img id="camStream" src="/stream" alt="camera stream"
+         onerror="this.style.opacity=0.3">
+    <div id="camOverlay">waiting for camera…</div>
+  </div>
+</div>
     <div class="card map-card">
       <h2>
         <span>Route</span>
