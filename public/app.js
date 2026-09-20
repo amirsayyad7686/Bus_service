@@ -1,41 +1,46 @@
 import * as THREE from 'three';
 
 /* ==================================================================
-   1. THREE.JS SCENE & RADAR ENVIRONMENT
+   1. THREE.JS SCENE SETUP
    ================================================================== */
 const canvas = document.getElementById('carCanvas');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0x03080e, 8, 22);
+scene.fog = new THREE.Fog(0x03080e, 9, 24);
 
-const camera = new THREE.PerspectiveCamera(38, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
-// Isometric bird's-eye angle matching the reference
-camera.position.set(0, 7.5, 7.8);
-camera.lookAt(0, 0.2, -0.6);
+const camera = new THREE.PerspectiveCamera(40, canvas.clientWidth / canvas.clientHeight, 0.1, 100);
+camera.position.set(0, 8.2, 8.2);
+camera.lookAt(0, 0.35, -0.6);
 
-// Lighting
-scene.add(new THREE.AmbientLight(0x447788, 1.2));
-const key = new THREE.DirectionalLight(0xaae8ff, 2.2);
-key.position.set(5, 12, 6);
+// Lights
+scene.add(new THREE.AmbientLight(0x386075, 1.4));
+const key = new THREE.DirectionalLight(0xdcf8ff, 2.4);
+key.position.set(6, 14, 7);
 scene.add(key);
 
-/* ---------- Concentric Radar Grid & Rings ---------- */
+const rim = new THREE.DirectionalLight(0x00f2fe, 1.2);
+rim.position.set(-6, 3, -6);
+scene.add(rim);
+
+/* ==================================================================
+   2. RADAR FLOOR & ADAS BOUNDING BOXES
+   ================================================================== */
 const radarGroup = new THREE.Group();
 scene.add(radarGroup);
 
-// Road plane with dash lane marks
+// Road plane & lanes
 const roadMat = new THREE.MeshBasicMaterial({ color: 0x05131c });
-const road = new THREE.Mesh(new THREE.PlaneGeometry(16, 26), roadMat);
+const road = new THREE.Mesh(new THREE.PlaneGeometry(16, 32), roadMat);
 road.rotation.x = -Math.PI / 2;
 road.position.set(0, -0.01, -2);
 radarGroup.add(road);
 
-// Road dashed stripes
-for (let i = -10; i < 8; i += 2.5) {
+// Center dash lanes
+for (let i = -12; i < 10; i += 2.8) {
   const stripeMat = new THREE.MeshBasicMaterial({ color: 0x00f2fe, transparent: true, opacity: 0.35 });
-  const stripe = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 1.2), stripeMat);
+  const stripe = new THREE.Mesh(new THREE.PlaneGeometry(0.12, 1.3), stripeMat);
   stripe.rotation.x = -Math.PI / 2;
   stripe.position.set(-1.8, 0.005, i);
   radarGroup.add(stripe);
@@ -52,7 +57,7 @@ for (let i = -10; i < 8; i += 2.5) {
     color: 0x00f2fe,
     side: THREE.DoubleSide,
     transparent: true,
-    opacity: 0.7 - idx * 0.18
+    opacity: 0.75 - idx * 0.2
   });
   const ring = new THREE.Mesh(ringGeo, ringMat);
   ring.rotation.x = -Math.PI / 2;
@@ -60,84 +65,240 @@ for (let i = -10; i < 8; i += 2.5) {
   radarGroup.add(ring);
 });
 
-// Radar Axes overlay
-const axisMat = new THREE.LineBasicMaterial({ color: 0x05dfb2, transparent: true, opacity: 0.6 });
+// Coordinate Crosshair Axes
+const axisMat = new THREE.LineBasicMaterial({ color: 0x05dfb2, transparent: true, opacity: 0.65 });
 const points = [
-  new THREE.Vector3(-3.8, 0.01, 0), new THREE.Vector3(3.8, 0.01, 0),
-  new THREE.Vector3(0, 0.01, -3.8), new THREE.Vector3(0, 0.01, 3.8)
+  new THREE.Vector3(-4, 0.01, 0), new THREE.Vector3(4, 0.01, 0),
+  new THREE.Vector3(0, 0.01, -4), new THREE.Vector3(0, 0.01, 4)
 ];
 const axisGeo = new THREE.BufferGeometry().setFromPoints(points);
-const axes = new THREE.LineSegments(axisGeo, axisMat);
-radarGroup.add(axes);
+radarGroup.add(new THREE.LineSegments(axisGeo, axisMat));
 
-/* ---------- Wireframe Detected Targets (ADAS UI) ---------- */
-function makeWireframeBox(w, h, d, color = 0x00f2fe) {
-  const geo = new THREE.BoxGeometry(w, h, d);
-  const edges = new THREE.EdgesGeometry(geo);
-  const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color, linewidth: 2 }));
-  return line;
+// Helper: Wireframe Bounding Box with Label Canvas
+function createDetectedTarget(w, h, d, color, x, z, labelText) {
+  const group = new THREE.Group();
+  const edges = new THREE.EdgesGeometry(new THREE.BoxGeometry(w, h, d));
+  const wire = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color, linewidth: 2 }));
+  wire.position.y = h / 2;
+  group.add(wire);
+
+  // Floating distance text tag
+  const tagCanvas = document.createElement('canvas');
+  tagCanvas.width = 128;
+  tagCanvas.height = 40;
+  const ctx = tagCanvas.getContext('2d');
+  ctx.fillStyle = '#05dfb2';
+  ctx.font = 'bold 22px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText(labelText, 64, 28);
+
+  const tex = new THREE.CanvasTexture(tagCanvas);
+  const spriteMat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+  const sprite = new THREE.Sprite(spriteMat);
+  sprite.scale.set(1.1, 0.35, 1);
+  sprite.position.set(0, h + 0.3, 0);
+  group.add(sprite);
+
+  group.position.set(x, 0, z);
+  return group;
 }
 
-// Nearby detected vehicles
-const v1 = makeWireframeBox(1.1, 0.7, 2.0);
-v1.position.set(-2.5, 0.4, -3.2);
-scene.add(v1);
-
-const v2 = makeWireframeBox(1.1, 0.7, 2.0);
-v2.position.set(2.4, 0.4, -2.8);
-scene.add(v2);
-
-// Pedestrian bounding boxes
-const p1 = makeWireframeBox(0.4, 0.9, 0.4, 0x25d366);
-p1.position.set(-2.7, 0.5, 1.2);
-scene.add(p1);
-
-const p2 = makeWireframeBox(0.4, 0.9, 0.4, 0x25d366);
-p2.position.set(2.8, 0.5, 1.4);
-scene.add(p2);
+// Nearby detected vehicles and pedestrians matching the visual
+scene.add(createDetectedTarget(1.2, 0.75, 2.1, 0x00f2fe, -2.7, -3.2, '28.7 m'));
+scene.add(createDetectedTarget(1.2, 0.75, 2.1, 0x00f2fe, 2.5, -2.9, '18.6 m'));
+scene.add(createDetectedTarget(0.45, 1.0, 0.45, 0x25d366, -2.9, 1.2, '34.2 m'));
+scene.add(createDetectedTarget(0.45, 1.0, 0.45, 0x25d366, 2.8, 1.4, '22.7 m'));
 
 /* ==================================================================
-   2. BLUE SUV CHASSIS
+   3. DETAILED 4x4 SUV MODEL
    ================================================================== */
-function buildSUV() {
+function buildDetailedSUV() {
   const suv = new THREE.Group();
-  const blue = new THREE.MeshStandardMaterial({ color: 0x185adb, roughness: 0.3, metalness: 0.4 });
-  const darkGlass = new THREE.MeshStandardMaterial({ color: 0x050c12, roughness: 0.1 });
-  const black = new THREE.MeshStandardMaterial({ color: 0x11161b, roughness: 0.8 });
 
-  // Main body
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.45, 2.3), blue);
-  body.position.y = 0.45;
-  suv.add(body);
+  // Materials
+  const bodyPaint = new THREE.MeshStandardMaterial({
+    color: 0x1e6bff,
+    metalness: 0.65,
+    roughness: 0.3
+  });
+  const darkPlastic = new THREE.MeshStandardMaterial({
+    color: 0x0f151c,
+    metalness: 0.3,
+    roughness: 0.7
+  });
+  const glassMat = new THREE.MeshStandardMaterial({
+    color: 0x071118,
+    metalness: 0.9,
+    roughness: 0.1,
+    transparent: true,
+    opacity: 0.8
+  });
+  const chromeMat = new THREE.MeshStandardMaterial({
+    color: 0xdaf2ff,
+    metalness: 0.95,
+    roughness: 0.15
+  });
+  const ledHeadlight = new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    emissive: 0xd0f0ff,
+    emissiveIntensity: 2.2
+  });
+  const ledTaillight = new THREE.MeshStandardMaterial({
+    color: 0xff2020,
+    emissive: 0xff0020,
+    emissiveIntensity: 2.0
+  });
 
-  // Cabin
-  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.42, 1.3), darkGlass);
-  cabin.position.set(0, 0.76, -0.2);
+  const box = (w, h, d, mat) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+
+  // 1. Lower Chassis & Running Boards
+  const chassis = box(1.05, 0.16, 2.3, darkPlastic);
+  chassis.position.y = 0.22;
+  suv.add(chassis);
+
+  const stepL = box(0.08, 0.04, 1.3, darkPlastic);
+  stepL.position.set(0.56, 0.18, 0);
+  suv.add(stepL);
+  const stepR = stepL.clone();
+  stepR.position.x = -0.56;
+  suv.add(stepR);
+
+  // 2. Main Body Shell
+  const lowerBody = box(1.08, 0.34, 2.22, bodyPaint);
+  lowerBody.position.y = 0.44;
+  suv.add(lowerBody);
+
+  // Hood & Fenders
+  const hood = box(1.02, 0.14, 0.74, bodyPaint);
+  hood.position.set(0, 0.62, 0.72);
+  hood.rotation.x = -0.05;
+  suv.add(hood);
+
+  // 3. Cabin & Glass Canopy
+  const cabin = box(0.96, 0.38, 1.25, bodyPaint);
+  cabin.position.set(0, 0.82, -0.22);
   suv.add(cabin);
 
-  // Wheels
-  const wheelGeo = new THREE.CylinderGeometry(0.24, 0.24, 0.18, 24);
-  wheelGeo.rotateZ(Math.PI / 2);
-  [[-0.6, 0.75], [0.6, 0.75], [-0.6, -0.75], [0.6, -0.75]].forEach(([x, z]) => {
-    const w = new THREE.Mesh(wheelGeo, black);
-    w.position.set(x, 0.24, z);
-    suv.add(w);
-  });
+  // Windshield
+  const windshield = box(0.90, 0.36, 0.05, glassMat);
+  windshield.position.set(0, 0.83, 0.42);
+  windshield.rotation.x = -0.42;
+  suv.add(windshield);
+
+  // Rear Window
+  const rearWin = box(0.90, 0.34, 0.05, glassMat);
+  rearWin.position.set(0, 0.83, -0.84);
+  rearWin.rotation.x = 0.25;
+  suv.add(rearWin);
+
+  // Side Glass Panes
+  const sideWin = box(0.04, 0.26, 1.15, glassMat);
+  sideWin.position.set(0.48, 0.84, -0.22);
+  suv.add(sideWin);
+  const sideWinR = sideWin.clone();
+  sideWinR.position.x = -0.48;
+  suv.add(sideWinR);
+
+  // 4. Roof Rack & LED Bar
+  const rackBar1 = box(0.86, 0.04, 0.04, darkPlastic);
+  rackBar1.position.set(0, 1.05, 0.2);
+  suv.add(rackBar1);
+  const rackBar2 = rackBar1.clone();
+  rackBar2.position.z = -0.2;
+  suv.add(rackBar2);
+  const rackBar3 = rackBar1.clone();
+  rackBar3.position.z = -0.6;
+  suv.add(rackBar3);
+
+  const roofRailL = box(0.04, 0.04, 1.1, chromeMat);
+  roofRailL.position.set(0.42, 1.05, -0.2);
+  suv.add(roofRailL);
+  const roofRailR = roofRailL.clone();
+  roofRailR.position.x = -0.42;
+  suv.add(roofRailR);
+
+  // Roof LED Light Bar
+  const lightBar = box(0.70, 0.05, 0.05, ledHeadlight);
+  lightBar.position.set(0, 1.02, 0.38);
+  suv.add(lightBar);
+
+  // 5. Front Bull-Bar Grille & Bumper
+  const bumper = box(1.08, 0.16, 0.14, darkPlastic);
+  bumper.position.set(0, 0.32, 1.14);
+  suv.add(bumper);
+
+  const grilleGuard = box(0.68, 0.24, 0.05, chromeMat);
+  grilleGuard.position.set(0, 0.44, 1.18);
+  suv.add(grilleGuard);
+
+  // Headlights & Taillights
+  const hlL = box(0.22, 0.09, 0.04, ledHeadlight);
+  hlL.position.set(0.38, 0.54, 1.13);
+  suv.add(hlL);
+  const hlR = hlL.clone();
+  hlR.position.x = -0.38;
+  suv.add(hlR);
+
+  const tlL = box(0.18, 0.12, 0.04, ledTaillight);
+  tlL.position.set(0.38, 0.54, -1.13);
+  suv.add(tlL);
+  const tlR = tlL.clone();
+  tlR.position.x = -0.38;
+  suv.add(tlR);
+
+  // Side Mirrors
+  const mirrorL = box(0.10, 0.07, 0.06, bodyPaint);
+  mirrorL.position.set(0.56, 0.74, 0.38);
+  suv.add(mirrorL);
+  const mirrorR = mirrorL.clone();
+  mirrorR.position.x = -0.56;
+  suv.add(mirrorR);
+
+  // 6. Detailed 4x4 Wheels with Rims & Hubs
+  function buildWheel(x, z) {
+    const wheel = new THREE.Group();
+
+    // Tire
+    const tireGeo = new THREE.CylinderGeometry(0.26, 0.26, 0.20, 24);
+    tireGeo.rotateZ(Math.PI / 2);
+    const tire = new THREE.Mesh(tireGeo, darkPlastic);
+    wheel.add(tire);
+
+    // Rim Outer
+    const rimGeo = new THREE.CylinderGeometry(0.16, 0.16, 0.21, 16);
+    rimGeo.rotateZ(Math.PI / 2);
+    const rim = new THREE.Mesh(rimGeo, chromeMat);
+    wheel.add(rim);
+
+    // Hub Cap
+    const hubGeo = new THREE.CylinderGeometry(0.06, 0.06, 0.22, 12);
+    hubGeo.rotateZ(Math.PI / 2);
+    const hub = new THREE.Mesh(hubGeo, darkPlastic);
+    wheel.add(hub);
+
+    wheel.position.set(x, 0.26, z);
+    return wheel;
+  }
+
+  suv.add(buildWheel(0.60, 0.72));
+  suv.add(buildWheel(-0.60, 0.72));
+  suv.add(buildWheel(0.60, -0.72));
+  suv.add(buildWheel(-0.60, -0.72));
 
   return suv;
 }
 
-const car = buildSUV();
+const car = buildDetailedSUV();
 scene.add(car);
 
 /* ==================================================================
-   3. CYBER-HUD SPEEDOMETER GAUGE
+   4. SPEEDOMETER (CANVAS 2D HUD)
    ================================================================== */
 class HudGauge {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    this.currentSpeed = 0;
+    this.currentSpeed = 48;
     this.targetSpeed = 48;
     this.maxSpeed = 120;
   }
@@ -145,7 +306,7 @@ class HudGauge {
   setSpeed(v) { this.targetSpeed = Math.max(0, v); }
 
   update() {
-    this.currentSpeed += (this.targetSpeed - this.currentSpeed) * 0.1;
+    this.currentSpeed += (this.targetSpeed - this.currentSpeed) * 0.12;
     this.draw();
   }
 
@@ -165,7 +326,7 @@ class HudGauge {
     const endAng = 2.15 * Math.PI;
     const totalSweep = endAng - startAng;
 
-    // Track arc
+    // Dark track
     ctx.lineWidth = 10;
     ctx.lineCap = 'round';
     ctx.strokeStyle = '#0d2836';
@@ -173,7 +334,7 @@ class HudGauge {
     ctx.arc(cx, cy, R, startAng, endAng);
     ctx.stroke();
 
-    // Active cyan glowing arc
+    // Glowing cyan arc
     const progress = Math.min(1, this.currentSpeed / this.maxSpeed);
     ctx.strokeStyle = '#00f2fe';
     ctx.shadowColor = '#00f2fe';
@@ -212,7 +373,7 @@ class HudGauge {
 
     // Central speed readout
     ctx.fillStyle = '#05dfb2';
-    ctx.font = '700 28px -apple-system, sans-serif';
+    ctx.font = '700 30px -apple-system, sans-serif';
     ctx.fillText(Math.round(this.currentSpeed).toString(), cx, cy - 4);
 
     ctx.fillStyle = '#557688';
@@ -224,18 +385,12 @@ class HudGauge {
 const gauge = new HudGauge(document.getElementById('speedGauge'));
 
 /* ==================================================================
-   4. ROUTE MAP (LEAFLET)
+   5. ROUTE MAP (LEAFLET)
    ================================================================== */
-const map = L.map('map', {
-  attributionControl: false,
-  zoomControl: false
-}).setView([29.6312, 52.5387], 14);
-
+const map = L.map('map', { attributionControl: false, zoomControl: false }).setView([29.6312, 52.5387], 14);
 L.control.zoom({ position: 'topleft' }).addTo(map);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19
-}).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
 
 const routeTrail = L.polyline([], {
   color: '#00f2fe',
@@ -244,10 +399,87 @@ const routeTrail = L.polyline([], {
   lineCap: 'round'
 }).addTo(map);
 
+let followOn = true;
+const followBtn = document.getElementById('followBtn');
+followBtn.addEventListener('click', () => {
+  followOn = !followOn;
+  followBtn.classList.toggle('active', followOn);
+  followBtn.innerHTML = followOn ? 'FOLLOW: ON' : 'FOLLOW: OFF';
+});
+
+document.getElementById('clearMap').addEventListener('click', () => routeTrail.setLatLngs([]));
+
 /* ==================================================================
-   5. SOCKET TELEMETRY INTEGRATION
+   6. CAMERA STREAM & CONTROLS
+   ================================================================== */
+(function setupCamera() {
+  const img = document.getElementById('camStream');
+  const overlay = document.getElementById('camOverlay');
+  const fpsEl = document.getElementById('camFps');
+  const pauseBtn = document.getElementById('camPause');
+  const fullBtn = document.getElementById('camFull');
+  const wrap = document.getElementById('camWrap');
+  if (!img) return;
+
+  let paused = false;
+
+  img.addEventListener('load', () => overlay.classList.add('hidden'));
+  img.addEventListener('error', () => overlay.classList.remove('hidden'));
+
+  pauseBtn.addEventListener('click', () => {
+    paused = !paused;
+    if (paused) {
+      img.src = '';
+      overlay.textContent = 'PAUSED';
+      overlay.classList.remove('hidden');
+      pauseBtn.textContent = '▶';
+    } else {
+      img.src = '/stream?t=' + Date.now();
+      overlay.textContent = 'CONNECTING…';
+      pauseBtn.textContent = '⏸';
+    }
+  });
+
+  fullBtn.addEventListener('click', () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else wrap.requestFullscreen?.();
+  });
+
+  async function pollCam() {
+    try {
+      const res = await fetch('/api/cam');
+      const data = await res.json();
+      if (!data.hasFrame || data.lastFrameAge > 3000) {
+        fpsEl.textContent = 'STALLED';
+        fpsEl.style.color = '#ff6b6b';
+      } else {
+        fpsEl.textContent = `${data.fps.toFixed(1)} fps`;
+        fpsEl.style.color = '#05dfb2';
+      }
+    } catch (e) {
+      fpsEl.textContent = '—';
+    }
+    setTimeout(pollCam, 1500);
+  }
+  pollCam();
+})();
+
+/* ==================================================================
+   7. LIVE TELEMETRY SOCKET
    ================================================================== */
 const io = window.io();
+
+io.on('connect', () => {
+  const c = document.getElementById('conn');
+  c.className = 'badge-status online';
+  c.innerHTML = '<span class="dot"></span> Online';
+});
+
+io.on('disconnect', () => {
+  const c = document.getElementById('conn');
+  c.className = 'badge-status bad';
+  c.innerHTML = '<span class="dot"></span> Offline';
+});
 
 io.on('telemetry', (t) => {
   if (t.speed !== undefined) gauge.setSpeed(t.speed);
@@ -255,11 +487,13 @@ io.on('telemetry', (t) => {
   if (t.lat && t.lon) {
     document.getElementById('lat').textContent = t.lat.toFixed(4);
     document.getElementById('lon').textContent = t.lon.toFixed(4);
-    routeTrail.addLatLng([t.lat, t.lon]);
+    const pt = [t.lat, t.lon];
+    routeTrail.addLatLng(pt);
+    if (followOn) map.panTo(pt);
   }
 
   if (t.yaw !== undefined) {
-    const deg = Math.round(t.yaw % 360);
+    const deg = Math.round((t.yaw % 360 + 360) % 360);
     const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
     const idx = Math.round(deg / 45) % 8;
     document.getElementById('directionVal').innerHTML = `${dirs[idx]} <span class="sub">(${deg}°)</span>`;
@@ -276,7 +510,7 @@ io.on('telemetry', (t) => {
 });
 
 /* ==================================================================
-   6. RENDER LOOP & RESIZE
+   8. RENDER LOOP & RESIZE
    ================================================================== */
 function onResize() {
   const w = canvas.clientWidth, h = canvas.clientHeight;

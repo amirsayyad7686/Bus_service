@@ -12,7 +12,7 @@
   --accent-mint: #25d366;
   --text-main: #e2f7f9;
   --text-muted: #57788c;
-  --card-glow: 0 0 20px rgba(0, 242, 254, 0.04);
+  --card-glow: 0 0 20px rgba(0, 242, 254, 0.05);
 }
 
 html, body {
@@ -41,7 +41,7 @@ html, body {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 4px 2px 8px;
+  padding: 4px 2px 6px;
 }
 
 .header-title {
@@ -50,9 +50,7 @@ html, body {
   gap: 8px;
 }
 
-.satellite-icon {
-  font-size: 16px;
-}
+.satellite-icon { font-size: 16px; }
 
 .header-title .status-dot {
   width: 8px;
@@ -82,6 +80,11 @@ html, body {
   font-size: 12px;
   font-weight: 600;
 }
+.badge-status.bad {
+  background: #2a1014;
+  border-color: #551c24;
+  color: #ff6b6b;
+}
 
 .badge-status .dot {
   width: 7px;
@@ -89,6 +92,10 @@ html, body {
   border-radius: 50%;
   background: var(--accent-teal);
   box-shadow: 0 0 6px var(--accent-teal);
+}
+.badge-status.bad .dot {
+  background: #ff6b6b;
+  box-shadow: 0 0 6px #ff6b6b;
 }
 
 /* ================= HUD CARDS ================= */
@@ -101,9 +108,9 @@ html, body {
   overflow: hidden;
 }
 
-/* ================= SECTION 1: 3D ADAS ================= */
+/* ================= 1. VIEWER & CAMERA PIP ================= */
 .viewer-card {
-  height: 380px;
+  height: 400px;
   position: relative;
   background: radial-gradient(ellipse at 50% 60%, #0c202a 0%, #03080e 90%);
 }
@@ -117,7 +124,7 @@ html, body {
 .hud-badge {
   position: absolute;
   z-index: 10;
-  background: rgba(7, 20, 29, 0.72);
+  background: rgba(7, 20, 29, 0.78);
   backdrop-filter: blur(8px);
   border: 1px solid rgba(14, 48, 65, 0.85);
   border-radius: 12px;
@@ -133,27 +140,15 @@ html, body {
   gap: 8px;
 }
 
-.hud-badge.top-left .hud-badge-icon {
-  font-size: 14px;
-}
-
-.hud-badge.top-left .hud-row {
-  color: #92b8cb;
-  line-height: 1.35;
-}
-
-.hud-badge.top-left .hud-row span {
-  color: #e2f7f9;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
+.hud-badge.top-left .hud-badge-icon { font-size: 14px; }
+.hud-badge.top-left .hud-row { color: #92b8cb; line-height: 1.35; }
+.hud-badge.top-left .hud-row span { color: #e2f7f9; font-weight: 500; }
 
 .gps-tag {
   color: var(--accent-teal);
   font-weight: 700;
   font-size: 10px;
   margin-left: 6px;
-  letter-spacing: 0.5px;
 }
 
 .hud-badge.top-right {
@@ -173,17 +168,103 @@ html, body {
   color: #8daab8;
 }
 
-.legend-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-}
+.legend-dot { width: 6px; height: 6px; border-radius: 50%; }
 .legend-dot.cyan  { background: var(--accent-cyan); box-shadow: 0 0 5px var(--accent-cyan); }
 .legend-dot.green { background: var(--accent-mint); box-shadow: 0 0 5px var(--accent-mint); }
 .legend-dot.teal  { background: #1ad3b0; }
 .legend-dot.mint  { background: #57f2aa; }
 
-/* ================= SECTION 2: SPEEDOMETER ================= */
+/* Camera PiP Overlay (Bottom-Right of 3D Scene) */
+.cam-pip {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 145px;
+  background: rgba(5, 15, 23, 0.9);
+  border: 1px solid #144455;
+  border-radius: 10px;
+  overflow: hidden;
+  z-index: 20;
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+}
+
+.cam-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 6px;
+  background: #09202a;
+  border-bottom: 1px solid #103444;
+}
+
+.cam-title {
+  font-size: 9px;
+  color: var(--accent-teal);
+  font-weight: 700;
+  letter-spacing: 0.5px;
+}
+
+.cam-fps {
+  font-size: 9px;
+  color: #6a8c9e;
+  font-family: monospace;
+}
+
+.cam-actions { display: flex; gap: 4px; }
+
+.mini-btn {
+  background: transparent;
+  border: none;
+  color: #8db5c7;
+  font-size: 10px;
+  cursor: pointer;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.mini-btn:hover { color: var(--accent-cyan); }
+
+.cam-video-box {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  background: #000;
+}
+
+#camStream {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+#camOverlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #557988;
+  font-size: 9px;
+  text-transform: uppercase;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.65);
+  pointer-events: none;
+  padding: 4px;
+}
+#camOverlay.hidden { opacity: 0; }
+
+.cam-pip:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  border-radius: 0;
+  inset: 0;
+}
+.cam-pip:fullscreen .cam-video-box { aspect-ratio: unset; height: 100%; }
+
+/* ================= 2. SPEEDOMETER SECTION ================= */
 .speed-card {
   padding: 16px 18px;
   display: flex;
@@ -212,10 +293,7 @@ html, body {
   height: 165px;
 }
 
-#speedGauge {
-  width: 100%;
-  height: 100%;
-}
+#speedGauge { width: 100%; height: 100%; }
 
 .metrics-right {
   flex: 0.9;
@@ -225,11 +303,7 @@ html, body {
   padding-left: 6px;
 }
 
-.metric-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
+.metric-item { display: flex; align-items: center; gap: 12px; }
 
 .metric-icon-circle {
   width: 36px;
@@ -250,30 +324,12 @@ html, body {
   fill: currentColor;
 }
 
-.metric-info {
-  display: flex;
-  flex-direction: column;
-}
+.metric-info { display: flex; flex-direction: column; }
+.metric-label { font-size: 10px; color: var(--text-muted); }
+.metric-val { font-size: 14px; font-weight: 600; color: #e2f7f9; }
+.metric-val .sub { font-size: 11px; color: #8daab8; font-weight: 400; }
 
-.metric-label {
-  font-size: 10px;
-  color: var(--text-muted);
-  letter-spacing: 0.3px;
-}
-
-.metric-val {
-  font-size: 14px;
-  font-weight: 600;
-  color: #e2f7f9;
-}
-
-.metric-val .sub {
-  font-size: 11px;
-  color: #8daab8;
-  font-weight: 400;
-}
-
-/* ================= SECTION 3: ROUTE MAP ================= */
+/* ================= 3. MAP SECTION ================= */
 .route-card {
   padding: 14px 16px 16px;
   display: flex;
@@ -287,10 +343,7 @@ html, body {
   align-items: center;
 }
 
-.route-controls {
-  display: flex;
-  gap: 8px;
-}
+.route-controls { display: flex; gap: 8px; }
 
 .pill-btn {
   display: inline-flex;
@@ -305,7 +358,6 @@ html, body {
   font-weight: 600;
   letter-spacing: 0.5px;
   cursor: pointer;
-  transition: all 0.2s;
 }
 
 .pill-btn.active {
@@ -322,15 +374,9 @@ html, body {
   border: 1px solid #103444;
 }
 
-#map {
-  width: 100%;
-  height: 100%;
-}
+#map { width: 100%; height: 100%; }
 
-/* Dark themed leaflet tiles */
-.leaflet-container {
-  background: #030a10 !important;
-}
+.leaflet-container { background: #030a10 !important; }
 .leaflet-tile {
   filter: brightness(0.68) contrast(1.25) saturate(0.6) hue-rotate(185deg) invert(0.94);
 }

@@ -19,7 +19,7 @@
 <body>
 
 <div class="app-container">
-  <!-- Header -->
+  <!-- Top Header -->
   <header class="app-header">
     <div class="header-title">
       <span class="satellite-icon">🛰</span>
@@ -31,19 +31,19 @@
     </div>
   </header>
 
-  <!-- Section 1: 3D ADAS / Radar Viewport -->
+  <!-- 1. 3D ADAS Radar & Vehicle Viewport -->
   <section class="hud-card viewer-card">
-    <!-- Top-Left Floating Badge -->
+    <!-- Floating GPS Badge -->
     <div class="hud-badge top-left">
       <div class="hud-badge-icon">📍</div>
       <div class="hud-badge-text">
         <div class="hud-row">Lat: <span id="lat">29.6312</span></div>
         <div class="hud-row">Lon: <span id="lon">52.5387</span></div>
       </div>
-      <div class="gps-tag" id="fixTag">📶 GPS</div>
+      <div class="gps-tag" id="fix">📶 GPS</div>
     </div>
 
-    <!-- Top-Right Legend -->
+    <!-- Floating Target Legend -->
     <div class="hud-badge top-right">
       <div class="legend-item"><span class="legend-dot cyan"></span> Vehicles</div>
       <div class="legend-item"><span class="legend-dot green"></span> Pedestrians</div>
@@ -51,10 +51,27 @@
       <div class="legend-item"><span class="legend-dot mint"></span> Safe Zone</div>
     </div>
 
+    <!-- Three.js Canvas -->
     <canvas id="carCanvas"></canvas>
+
+    <!-- Embedded Live Camera Widget -->
+    <div class="cam-pip" id="camWrap">
+      <div class="cam-header">
+        <span class="cam-title">CAM FEED</span>
+        <span id="camFps" class="cam-fps">— fps</span>
+        <div class="cam-actions">
+          <button id="camPause" class="mini-btn" title="Pause Stream">⏸</button>
+          <button id="camFull" class="mini-btn" title="Fullscreen">⛶</button>
+        </div>
+      </div>
+      <div class="cam-video-box">
+        <img id="camStream" src="/stream" alt="camera stream" onerror="this.style.opacity=0.3">
+        <div id="camOverlay">waiting for camera…</div>
+      </div>
+    </div>
   </section>
 
-  <!-- Section 2: Speedometer & Telemetry Indicators -->
+  <!-- 2. Speedometer & ADAS Telemetry -->
   <section class="hud-card speed-card">
     <div class="speed-left">
       <div class="card-tag">SPEED</div>
@@ -96,7 +113,7 @@
     </div>
   </section>
 
-  <!-- Section 3: Leaflet Route Map -->
+  <!-- 3. GPS Map Route -->
   <section class="hud-card route-card">
     <div class="route-header">
       <div class="card-tag">
