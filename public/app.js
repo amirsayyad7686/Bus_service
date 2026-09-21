@@ -469,6 +469,12 @@ document.getElementById('clearMap').addEventListener('click', () => routeTrail.s
    ================================================================== */
 const io = window.io();
 
+// ---- Shared angle state (module-level so render() can see it) ----
+const angles = {
+  targetPitch: 0, targetRoll: 0, targetYaw: 0,
+  shownPitch:  0, shownRoll:  0, shownYaw:  0
+};
+
 io.on('connect', () => {
   const c = document.getElementById('conn');
   c.className = 'badge-status online';
@@ -481,9 +487,12 @@ io.on('disconnect', () => {
   c.innerHTML = '<span class="dot"></span> Offline';
 });
 
+// ---- Single telemetry handler ----
 io.on('telemetry', (t) => {
+  // Speed
   if (t.speed !== undefined) gauge.setSpeed(t.speed);
 
+  // GPS position + trail
   if (t.lat && t.lon) {
     document.getElementById('lat').textContent = t.lat.toFixed(4);
     document.getElementById('lon').textContent = t.lon.toFixed(4);
@@ -492,18 +501,23 @@ io.on('telemetry', (t) => {
     if (followOn) map.panTo(pt);
   }
 
+  // Orientation — update all three axes
   if (t.yaw !== undefined) {
+    angles.targetYaw = t.yaw;
+
     const deg = Math.round((t.yaw % 360 + 360) % 360);
     const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-    const idx = Math.round(deg / 45) % 8;
-    document.getElementById('directionVal').innerHTML = `${dirs[idx]} <span class="sub">(${deg}°)</span>`;
-    car.rotation.y = -THREE.MathUtils.degToRad(deg);
+    const idx  = Math.round(deg / 45) % 8;
+    document.getElementById('directionVal').innerHTML =
+      `${dirs[idx]} <span class="sub">(${deg}°)</span>`;
   }
+  if (t.pitch !== undefined) angles.targetPitch = t.pitch;
+  if (t.roll  !== undefined) angles.targetRoll  = t.roll;
 
+  // Extra telemetry
   if (t.alt !== undefined) {
     document.getElementById('altVal').textContent = `${Math.round(t.alt)} m`;
   }
-
   if (t.ax !== undefined) {
     document.getElementById('accVal').textContent = `${t.ax.toFixed(2)} g`;
   }
@@ -521,9 +535,31 @@ function onResize() {
 window.addEventListener('resize', onResize);
 onResize();
 
+// Shortest-path angular interpolation (handles ±180 wrap)
+function lerpAngle(a, b, f) {
+  let d = ((b - a + 180) % 360) - 180;
+  if (d < -180) d += 360;
+  return a + d * f;
+}
+
 function render() {
   requestAnimationFrame(render);
+
   gauge.update();
+
+  // Smooth toward target angles
+  angles.shownPitch += (angles.targetPitch - angles.shownPitch) * 0.15;
+  angles.shownRoll  += (angles.targetRoll  - angles.shownRoll)  * 0.15;
+  angles.shownYaw    = lerpAngle(angles.shownYaw, angles.targetYaw, 0.15);
+
+  // Apply to car — YXZ: Y=yaw, X=pitch, Z=roll
+  car.rotation.set(
+    THREE.MathUtils.degToRad(angles.shownPitch),
+    THREE.MathUtils.degToRad(angles.shownYaw),
+    THREE.MathUtils.degToRad(angles.shownRoll),
+    'YXZ'
+  );
+
   renderer.render(scene, camera);
 }
 render();

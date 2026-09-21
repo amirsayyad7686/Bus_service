@@ -13,7 +13,9 @@
 // ==================== Remote GPIO control ====================
 const int REMOTE_PINS[] = {2, 4, 5, 32, 33};
 const int REMOTE_PIN_COUNT = 5;
-int       gpioState[5] = {0,0,0,0,0};
+int       gpioState[5]  = {0, 0, 0, 0, 0};   // parallel to REMOTE_PINS
+
+// Pending ACK message to send on the next opportunity
 String    pendingAck;
 
 // ==================== Extended TCP state ====================
@@ -64,7 +66,6 @@ unsigned long   lastGpsQuery = 0;
 const unsigned long GPS_QUERY_MS = 3000;
 
 // ==================== TCP state machine ====================
-enum TcpState { TCP_IDLE, TCP_WAIT_PROMPT, TCP_WAIT_SENDOK };
 TcpState tcpState = TCP_IDLE;
 String   tcpPayload;
 String   peekBuffer;
