@@ -682,3 +682,56 @@ const gpioState = {};     // pin -> 0|1 (last ACK from ESP32)
     });
   }
 })();
+
+
+
+/* ==================================================================
+   10. POWER RAIL STATUS
+   ================================================================== */
+(function setupPower() {
+  const stEl   = document.getElementById('pwrSt');
+  const vpEl   = document.getElementById('pwrVp');
+  const ledEl  = document.getElementById('pwrLed');
+  const stItem = document.getElementById('pwrStItem');
+  const vpItem = document.getElementById('pwrVpItem');
+  const ledItem= document.getElementById('pwrLedItem');
+  const statusText = document.getElementById('pwrStatusText');
+  const statusEl   = document.getElementById('pwrStatus');
+  if (!stEl) return;
+
+  function update({ st, vp, led2 }) {
+    if (st === 0)      { stEl.textContent = 'OK';    stItem.className = 'pwr-item ok'; }
+    else if (st === 1) { stEl.textContent = 'FAULT'; stItem.className = 'pwr-item warn'; }
+    else               { stEl.textContent = '—';     stItem.className = 'pwr-item'; }
+
+    if (typeof vp === 'number') {
+      const v = vp * 3.3 / 4095;
+      vpEl.textContent = v.toFixed(3) + ' V';
+      vpItem.className = 'pwr-item' + (v > 0.1 ? ' ok' : '');
+    } else {
+      vpEl.textContent = '—';
+      vpItem.className = 'pwr-item';
+    }
+
+    if (led2 === 1)      { ledEl.textContent = 'ON';  ledItem.className = 'pwr-item ok'; }
+    else if (led2 === 0) { ledEl.textContent = 'OFF'; ledItem.className = 'pwr-item'; }
+    else                 { ledEl.textContent = '—';   ledItem.className = 'pwr-item'; }
+
+    let summary = 'idle', cls = '';
+    if (st === 1)      { summary = 'rail fault'; cls = 'busy'; }
+    else if (st === 0) { summary = 'rail ok';    cls = 'ok';   }
+    statusText.textContent = summary;
+    statusEl.className = 'cmd-status' + (cls ? ' ' + cls : '');
+  }
+
+  const sock = window.io();
+  sock.on('telemetry', (t) => update({ st: t.st, vp: t.vp, led2: t.led2 }));
+
+  setInterval(async () => {
+    try {
+      const r = await fetch('/status');
+      const j = await r.json();
+      update({ st: j.st, vp: j.vp, led2: j.led2 });
+    } catch (_) {}
+  }, 3000);
+})();

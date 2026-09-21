@@ -529,3 +529,46 @@ html, body {
 @media (max-width: 380px) {
   .gpio-grid { grid-template-columns: 1fr; }
 }
+
+
+/* ================= POWER CARD ================= */
+.power-card {
+  padding: 14px 16px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pwr-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px;
+}
+
+.pwr-item {
+  background: #0a1a24;
+  border: 1px solid #103444;
+  border-radius: 12px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: border-color .2s, background .2s;
+}
+.pwr-item.ok   { background: #08261a; border-color: #166b3a; }
+.pwr-item.warn { background: #241e08; border-color: #6a5620; }
+
+.pwr-label {
+  font-size: 10px; color: #8daab8; font-weight: 600;
+  letter-spacing: .5px; text-transform: uppercase;
+}
+.pwr-value {
+  font-size: 16px; font-weight: 700; color: #e2f7f9;
+  font-family: monospace; font-variant-numeric: tabular-nums;
+}
+.pwr-item.ok .pwr-value   { color: #25d366; }
+.pwr-item.warn .pwr-value { color: #ffd866; }
+
+.pwr-sub { font-size: 9px; color: #4a6673; font-family: monospace; }
+
+@media (max-width: 400px) { .pwr-grid { grid-template-columns: 1fr; } }

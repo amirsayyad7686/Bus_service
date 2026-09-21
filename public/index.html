@@ -86,6 +86,35 @@
     <!-- Populated by JS from PIN_CONFIG -->
   </div>
 </section>
+<section class="hud-card power-card">
+  <div class="route-header">
+    <div class="card-tag"><span class="icon">🔌</span> POWER RAIL</div>
+    <div class="cmd-status" id="pwrStatus">
+      <span class="cmd-dot"></span>
+      <span id="pwrStatusText">—</span>
+    </div>
+  </div>
+
+  <div class="pwr-grid">
+    <div class="pwr-item" id="pwrStItem">
+      <div class="pwr-label">LM66200 ST</div>
+      <div class="pwr-value" id="pwrSt">—</div>
+      <div class="pwr-sub">IO4 · rail status</div>
+    </div>
+
+    <div class="pwr-item" id="pwrVpItem">
+      <div class="pwr-label">SENSOR VP</div>
+      <div class="pwr-value" id="pwrVp">— V</div>
+      <div class="pwr-sub">IO36 · ADC</div>
+    </div>
+
+    <div class="pwr-item" id="pwrLedItem">
+      <div class="pwr-label">SM5308 LED2</div>
+      <div class="pwr-value" id="pwrLed">—</div>
+      <div class="pwr-sub">IO23 · charge ind.</div>
+    </div>
+  </div>
+</section>
   <!-- 2. Speedometer & ADAS Telemetry -->
   <section class="hud-card speed-card">
     <div class="speed-left">
