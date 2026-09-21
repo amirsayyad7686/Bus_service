@@ -1,10 +1,10 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <WiFiClient.h>
-
+unsigned long lastFrames = 0, lastBytes = 0;
 // ==================== WiFi ====================
-const char* WIFI_SSID = "Amir34";
-const char* WIFI_PASS = "24683579";
+const char* WIFI_SSID = "Amir";
+const char* WIFI_PASS = "shirazamir35963";
 
 // ==================== Node server (raw TCP, NOT HTTP) ====================
 const char* SERVER_HOST = "181.41.194.124";
@@ -12,8 +12,9 @@ const uint16_t SERVER_PORT = 5203;              // <- new TCP port for frames
 
 // ==================== Camera tuning ====================
 // Trade-off: lower resolution / higher quality number = faster frames
-#define FRAME_SIZE_       FRAMESIZE_QVGA          // VGA(640x480) | QVGA(320x240) | CIF(400x296)
-#define JPEG_QUALITY_     20                     // 10=high, 30=low (higher = smaller/faster)
+#define FRAME_SIZE_       FRAMESIZE_QQVGA          // VGA(640x480) | QVGA(320x240) | CIF(400x296)
+#define JPEG_QUALITY_     25                     // 10=high, 30=low (higher = smaller/faster)
+#define XCLK_HZ_         20000000            // reliable, fast
 
 // ==================== AI-Thinker ESP32-CAM pins ====================
 #define PWDN_GPIO_NUM     32
@@ -62,15 +63,16 @@ bool initCamera() {
   config.pin_sccb_scl = SIOC_GPIO_NUM;
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
-  config.xclk_freq_hz = 24000000;                // 20 MHz — stable
+  config.xclk_freq_hz = 20000000;                // 20 MHz — stable
   config.pixel_format = PIXFORMAT_JPEG;
 
   if (psramFound()) {
+    config.xclk_freq_hz = XCLK_HZ_;
     config.frame_size   = FRAME_SIZE_;
     config.jpeg_quality = JPEG_QUALITY_;
-    config.fb_count     = 2;                     // double-buffer for smoothness
+    config.fb_count     = 1;                     // lowest latency
     config.fb_location  = CAMERA_FB_IN_PSRAM;
-    config.grab_mode    = CAMERA_GRAB_LATEST;    // always newest frame
+    config.grab_mode    = CAMERA_GRAB_LATEST;
   } else {
     config.frame_size   = FRAMESIZE_QVGA;
     config.jpeg_quality = JPEG_QUALITY_;
@@ -85,13 +87,14 @@ bool initCamera() {
   Serial.println("[CAM] init OK");
 
   sensor_t *s = esp_camera_sensor_get();
+  s->set_lenc(s, 0);
+  s->set_dcw(s, 0);
+  s->set_bpc(s, 0);
+  s->set_wpc(s, 0);
+  s->set_raw_gma(s, 0);
   s->set_brightness(s, 0);
   s->set_contrast(s, 0);
-  s->set_saturation(s, 0);
-  s->set_whitebal(s, 1);
-  s->set_exposure_ctrl(s, 1);
-  s->set_gain_ctrl(s, 1);
-  s->set_awb_gain(s, 1);
+  s->set_saturation(s, -1);      // less color = smaller JPEG
   return true;
 }
 
@@ -103,6 +106,7 @@ bool ensureSocket() {
   Serial.printf("[TCP] connecting to %s:%u ... ", SERVER_HOST, SERVER_PORT);
   if (camSocket.connect(SERVER_HOST, SERVER_PORT, 3000)) {
     camSocket.setNoDelay(true);
+
     Serial.println("OK");
     return true;
   }
@@ -114,7 +118,6 @@ bool ensureSocket() {
 bool sendFrame(camera_fb_t *fb) {
   if (!ensureSocket()) return false;
 
-  // 4-byte little-endian length prefix
   uint32_t len = fb->len;
   uint8_t header[4] = {
     (uint8_t)(len & 0xFF),
@@ -123,20 +126,14 @@ bool sendFrame(camera_fb_t *fb) {
     (uint8_t)((len >> 24) & 0xFF)
   };
 
-  // Write header + payload. TCP will buffer; the OS handles batching.
-  size_t w1 = camSocket.write(header, 4);
-  size_t w2 = camSocket.write(fb->buf, fb->len);
-
-  if (w1 != 4 || w2 != fb->len) {
-    Serial.println("[TCP] short write — reconnecting");
-    camSocket.stop();
-    return false;
-  }
+  // Single combined buffer — one write() call, one kernel packet chain
+  camSocket.write(header, 4);
+  camSocket.write(fb->buf, fb->len);
+  camSocket.flush();              // <-- force immediate transmission
 
   bytesSent += fb->len;
   return true;
 }
-
 // ==================== Setup ====================
 void setup() {
   Serial.begin(115200);
@@ -199,11 +196,13 @@ void loop() {
   // Stats once per second
   unsigned long now = millis();
   if (now - lastStat >= 1000) {
-    float sec = (now - startTime) / 1000.0;
-    float fps = frameCount / sec;
-    float kbps = (bytesSent / 1024.0) / sec;
-    Serial.printf("[STAT] fps=%.1f  frames=%lu  fail=%lu  %.0f KB/s  heap=%u\n",
+    float dt = (now - lastStat) / 1000.0;
+    float fps = (frameCount - lastFrames) / dt;
+    float kbps = ((bytesSent - lastBytes) / 1024.0) / dt;
+    Serial.printf("[STAT] fps=%.1f frames=%lu fail=%lu %.0f KB/s heap=%u\n",
                   fps, frameCount, failCount, kbps, ESP.getFreeHeap());
     lastStat = now;
+    lastFrames = frameCount;
+    lastBytes = bytesSent;
   }
 }

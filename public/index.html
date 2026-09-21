@@ -70,7 +70,22 @@
       </div>
     </div>
   </section>
+<!-- 4. Remote GPIO Control -->
+<section class="hud-card control-card">
+  <div class="route-header">
+    <div class="card-tag">
+      <span class="icon">⚡</span> REMOTE CONTROL
+    </div>
+    <div class="cmd-status" id="cmdStatus">
+      <span class="cmd-dot"></span>
+      <span id="cmdStatusText">idle</span>
+    </div>
+  </div>
 
+  <div class="gpio-grid" id="gpioGrid">
+    <!-- Populated by JS from PIN_CONFIG -->
+  </div>
+</section>
   <!-- 2. Speedometer & ADAS Telemetry -->
   <section class="hud-card speed-card">
     <div class="speed-left">

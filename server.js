@@ -49,7 +49,34 @@ function parsePayload(msg) {
   }
   return out;
 }
+// ============================================================
+//  REMOTE COMMAND QUEUE (for GPIO control)
+// ============================================================
+const COMMAND_TTL = 30_000;                    // commands expire after 30 s
+let   commandQueue = [];                       // FIFO of pending commands
+const lastGpioState = {};                      // { pin: 0|1 } — last known pin states
 
+function enqueueCommand(pin, state) {
+  // Coalesce: drop older commands for the same pin
+  commandQueue = commandQueue.filter(c => c.pin !== pin);
+  const cmd = {
+    id: Date.now(),
+    type: 'GPIO',
+    pin: Number(pin),
+    state: state ? 1 : 0,
+    queuedAt: Date.now()
+  };
+  commandQueue.push(cmd);
+  io.emit('command-queued', cmd);
+  console.log(`[CMD] queued GPIO ${cmd.pin} -> ${cmd.state}`);
+  return cmd;
+}
+
+function popCommand() {
+  const now = Date.now();
+  commandQueue = commandQueue.filter(c => now - c.queuedAt < COMMAND_TTL);
+  return commandQueue.shift() || null;
+}
 const tcpServer = net.createServer((socket) => {
   const addr = `${socket.remoteAddress}:${socket.remotePort}`;
   console.log(`[TCP] client connected: ${addr}`);
@@ -57,30 +84,48 @@ const tcpServer = net.createServer((socket) => {
 
   let buffer = '';
 
-  socket.on('data', (data) => {
-    buffer += data.toString();
+socket.on('data', (data) => {
+  buffer += data.toString();
+  let nl;
+  while ((nl = buffer.indexOf('\n')) >= 0) {
+    const raw = buffer.slice(0, nl).trim();
+    buffer = buffer.slice(nl + 1);
+    if (!raw) continue;
+    console.log(`[TCP] <- ${raw}`);
 
-    let nl;
-    while ((nl = buffer.indexOf('\n')) >= 0) {
-      const raw = buffer.slice(0, nl).trim();
-      buffer = buffer.slice(nl + 1);
-      if (!raw) continue;
+    // ---- GPIO ACK from ESP32 ----
+    // Format: client23832:ACK:GPIO:<pin>:<state>
+    if (/^client23832:ACK:GPIO:\d+:[01]$/.test(raw)) {
+      const [, pinStr, stateStr] = raw.match(/ACK:GPIO:(\d+):([01])/);
+      const pin = Number(pinStr);
+      const state = Number(stateStr);
+      lastGpioState[pin] = state;
+      io.emit('gpio-state', { pin, state, ts: Date.now() });
+      console.log(`[CMD] ACK GPIO ${pin} -> ${state}`);
+      continue;
+    }
 
-      console.log(`[TCP] <- ${raw}`);
+    // ---- Telemetry (with optional PULL trailer) ----
+    const hasPull = raw.endsWith(',PULL');
+    const body = hasPull ? raw.slice(0, -5) : raw;
 
-      const parsed = parsePayload(raw);
-      if (!parsed) {
-        console.warn(`[TCP] dropped (bad format or unknown client): ${raw}`);
-        continue;
-      }
-
+    const parsed = parsePayload(body);
+    if (parsed) {
       latest = parsed;
-
-      // Broadcast to every connected browser
       io.emit('telemetry', parsed);
     }
-  });
 
+    // If ESP32 asked for commands, answer on the same socket
+    if (hasPull) {
+      const cmd = popCommand();
+      if (cmd) {
+        const line = `CMD:${cmd.type}:${cmd.pin}:${cmd.state}\n`;
+        socket.write(line);
+        console.log(`[CMD] -> ${cmd.type} ${cmd.pin}=${cmd.state}`);
+      }
+    }
+  }
+});
   socket.on('error', (err) => console.error(`[TCP] error from ${addr}:`, err.message));
   socket.on('close', () => console.log(`[TCP] client disconnected: ${addr}`));
 });
@@ -94,6 +139,7 @@ io.on('connection', (sock) => {
   console.log(`[WS] browser connected: ${sock.id}`);
   if (latest) sock.emit('telemetry', latest);
   sock.on('disconnect', () => console.log(`[WS] browser disconnected: ${sock.id}`));
+  sock.emit('gpio-snapshot', lastGpioState);   // <- new
 });
 
 
@@ -185,7 +231,20 @@ app.get('/api/cam', (req, res) => {
     frameBytes:   latestFrame ? latestFrame.length : 0
   });
 });
+app.use(express.json());           // must be added before this route
 
+app.post('/api/command', (req, res) => {
+  const { pin, state } = req.body || {};
+  if (pin === undefined || state === undefined) {
+    return res.status(400).json({ ok: false, error: 'pin and state required' });
+  }
+  const cmd = enqueueCommand(pin, state);
+  res.json({ ok: true, cmd });
+});
+
+app.get('/api/gpio', (req, res) => {
+  res.json({ ok: true, states: lastGpioState });
+});
 const CAM_TCP_PORT = 5203;   // ESP32-CAM connects here
 
 // -------- Camera TCP receiver --------

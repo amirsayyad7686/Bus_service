@@ -10,7 +10,14 @@
 #define MC60_RX   18
 #define MC60_TX   19
 #define MC60_BAUD 115200
+// ==================== Remote GPIO control ====================
+const int REMOTE_PINS[] = {2, 4, 5, 32, 33};
+const int REMOTE_PIN_COUNT = 5;
+int       gpioState[5] = {0,0,0,0,0};
+String    pendingAck;
 
+// ==================== Extended TCP state ====================
+enum TcpState { TCP_IDLE, TCP_WAIT_PROMPT, TCP_WAIT_SENDOK, TCP_SENT_WAIT, TCP_WAIT_READ };
 // ==================== I2C devices ====================
 #define MPU_ADDR         0x69
 #define MAG_ADDR         0x2C
@@ -79,6 +86,50 @@ volatile int qHead = 0, qTail = 0;
 unsigned long lastCmdTime = 0;
 const unsigned long CMD_GAP_MS = 350;
 
+
+
+
+void initRemoteGpio() {
+  for (int i = 0; i < REMOTE_PIN_COUNT; i++) {
+    pinMode(REMOTE_PINS[i], OUTPUT);
+    digitalWrite(REMOTE_PINS[i], LOW);
+    gpioState[i] = 0;
+  }
+  Serial.printf("[GPIO] initialized %d pins\n", REMOTE_PIN_COUNT);
+}
+void handleIncomingCommand(const String& line) {
+  // Expected: CMD:GPIO:<pin>:<state>
+  Serial.printf("[CMD] received: %s\n", line.c_str());
+
+  if (!line.startsWith("CMD:GPIO:")) return;
+
+  int c1 = line.indexOf(':', 4);       // after CMD:GPIO
+  if (c1 < 0) return;
+  int c2 = line.indexOf(':', c1 + 1);
+  if (c2 < 0) return;
+
+  int pin   = line.substring(c1 + 1, c2).toInt();
+  int state = line.substring(c2 + 1).toInt();
+
+  // Find in our pin list
+  int idx = -1;
+  for (int i = 0; i < REMOTE_PIN_COUNT; i++) {
+    if (REMOTE_PINS[i] == pin) { idx = i; break; }
+  }
+  if (idx < 0) {
+    Serial.printf("[CMD] unknown pin %d\n", pin);
+    pendingAck = "client23832:ACK:GPIO:" + String(pin) + ":ERR";
+    return;
+  }
+
+  // Execute
+  digitalWrite(REMOTE_PINS[idx], state ? HIGH : LOW);
+  gpioState[idx] = state ? 1 : 0;
+  Serial.printf("[GPIO] pin %d -> %d\n", pin, state);
+
+  // Queue ACK (sent on next tick)
+  pendingAck = "client23832:ACK:GPIO:" + String(pin) + ":" + String(state);
+}
 // ==================================================================
 //  SENSOR FUNCTIONS
 // ==================================================================
@@ -258,6 +309,7 @@ void startSend(const String& payload) {
 
 void tcpStateMachine() {
   switch (tcpState) {
+
     case TCP_WAIT_PROMPT:
       if (peekBuffer.indexOf(">") >= 0) {
         Serial2.print(tcpPayload);
@@ -277,14 +329,40 @@ void tcpStateMachine() {
     case TCP_WAIT_SENDOK:
       if (peekBuffer.indexOf("SEND OK") >= 0 || peekBuffer.indexOf("+QISEND:") >= 0) {
         peekBuffer = "";
-        tcpState = TCP_IDLE;
+        tcpState = TCP_SENT_WAIT;
+        tcpStateSince = millis();
         sendOkCount++;
-        Serial.println("[TCP] SEND OK");
       } else if (millis() - tcpStateSince > 8000) {
         peekBuffer = "";
         tcpState = TCP_IDLE;
         sendFailCount++;
         Serial.println("[TCP] SEND OK timeout");
+      }
+      break;
+
+    case TCP_SENT_WAIT:            // give the server 150 ms to enqueue the reply
+      if (millis() - tcpStateSince > 150) {
+        Serial2.print("AT+QIRD=0,1500\r\n");
+        peekBuffer = "";
+        tcpState = TCP_WAIT_READ;
+        tcpStateSince = millis();
+      }
+      break;
+
+    case TCP_WAIT_READ:
+      // Look for a CMD: line anywhere in the response
+      if (peekBuffer.indexOf("CMD:GPIO:") >= 0 && peekBuffer.indexOf("\n") >= 0) {
+        int start = peekBuffer.indexOf("CMD:GPIO:");
+        int end   = peekBuffer.indexOf("\n", start);
+        if (end < 0) end = peekBuffer.length();
+        String cmd = peekBuffer.substring(start, end);
+        cmd.trim();
+        handleIncomingCommand(cmd);
+        peekBuffer = "";
+        tcpState = TCP_IDLE;
+      } else if (millis() - tcpStateSince > 3000) {
+        peekBuffer = "";
+        tcpState = TCP_IDLE;
       }
       break;
 
@@ -553,14 +631,21 @@ while (Serial2.available()) {
     Serial2.print("AT+QGNSSRD=\"NMEA/RMC\"\r\n");
   }
 
-  // 5. Auto-send
-  if (autoSendEnabled && tcpState == TCP_IDLE &&
-      millis() - lastAutoSend >= AUTO_SEND_MS) {
-    lastAutoSend = millis();
+// 5. Auto-send
+if (autoSendEnabled && tcpState == TCP_IDLE &&
+    millis() - lastAutoSend >= AUTO_SEND_MS) {
+  lastAutoSend = millis();
 
-    char payload[220];
+  // Send pending ACK first, if any
+  if (pendingAck.length() > 0) {
+    Serial.printf("[TCP] sending ACK: %s\n", pendingAck.c_str());
+    startSend(pendingAck);
+    pendingAck = "";
+  } else {
+    // Telemetry + PULL trailer
+    char payload[240];
     snprintf(payload, sizeof(payload),
-      "client23832:%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.2f",
+      "client23832:%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.2f,PULL",
       (double)gpsLat, (double)gpsLon,
       (double)g_pitch, (double)g_roll, (double)g_yaw,
       (double)g_gx, (double)g_gy, (double)g_gz,
@@ -568,6 +653,7 @@ while (Serial2.available()) {
       (double)gpsSpeed);
     startSend(String(payload));
   }
+}
 
   // 6. Debug print
   if (millis() - lastSerialPrint >= 1000) {

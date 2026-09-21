@@ -527,3 +527,122 @@ function render() {
   renderer.render(scene, camera);
 }
 render();
+
+
+
+/* ==================================================================
+   9. REMOTE GPIO CONTROL
+   ================================================================== */
+const PIN_CONFIG = [
+  { pin: 2,  name: 'Onboard LED' },
+  { pin: 4,  name: 'GPIO 4'      },
+  { pin: 5,  name: 'GPIO 5'      },
+  { pin: 32, name: 'GPIO 32'     },
+  { pin: 33, name: 'GPIO 33'     }
+];
+
+const gpioState = {};     // pin -> 0|1 (last ACK from ESP32)
+
+(function setupControl() {
+  const grid = document.getElementById('gpioGrid');
+  const statusEl = document.getElementById('cmdStatus');
+  const statusText = document.getElementById('cmdStatusText');
+  if (!grid) return;
+
+  // Build the DOM
+  PIN_CONFIG.forEach(({ pin, name }) => {
+    const el = document.createElement('div');
+    el.className = 'gpio-item';
+    el.dataset.pin = pin;
+    el.innerHTML = `
+      <div class="gpio-info">
+        <div class="gpio-name">${name}</div>
+        <div class="gpio-pin">PIN ${pin}</div>
+      </div>
+      <div class="gpio-toggle" data-pin="${pin}"></div>
+    `;
+    grid.appendChild(el);
+  });
+
+  function setStatus(text, kind) {
+    statusText.textContent = text;
+    statusEl.className = 'cmd-status' + (kind ? ' ' + kind : '');
+  }
+
+  function renderPin(pin) {
+    const item = grid.querySelector(`.gpio-item[data-pin="${pin}"]`);
+    const toggle = item?.querySelector('.gpio-toggle');
+    if (!toggle) return;
+    const state = gpioState[pin] || 0;
+    toggle.classList.toggle('on', state === 1);
+    item.classList.toggle('on', state === 1);
+    item.classList.remove('pending');
+    toggle.classList.remove('pending');
+  }
+
+  // Initial fetch
+  fetch('/api/gpio')
+    .then(r => r.json())
+    .then(j => {
+      if (j.ok) {
+        Object.assign(gpioState, j.states || {});
+        PIN_CONFIG.forEach(c => renderPin(c.pin));
+      }
+    })
+    .catch(() => {});
+
+  // Click handler
+  grid.addEventListener('click', async (e) => {
+    const toggle = e.target.closest('.gpio-toggle');
+    if (!toggle) return;
+    const pin = Number(toggle.dataset.pin);
+    const next = (gpioState[pin] || 0) ? 0 : 1;
+
+    // Optimistic pending UI
+    const item = toggle.closest('.gpio-item');
+    item.classList.add('pending');
+    toggle.classList.add('pending');
+
+    setStatus('sending…', 'busy');
+
+    try {
+      const res = await fetch('/api/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin, state: next })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      // Wait for the ACK event from the socket to update the UI
+      setTimeout(() => {
+        // If no ACK arrived within 5 s, un-pend and mark as unknown
+        if (item.classList.contains('pending')) {
+          item.classList.remove('pending');
+          toggle.classList.remove('pending');
+          setStatus('no ack', '');
+        }
+      }, 5000);
+    } catch (err) {
+      item.classList.remove('pending');
+      toggle.classList.remove('pending');
+      setStatus('error', '');
+    }
+  });
+
+  // Live updates from server
+  const sock = window.io ? window.io() : null;
+  if (sock) {
+    sock.on('gpio-state', ({ pin, state }) => {
+      gpioState[pin] = state;
+      renderPin(pin);
+      setStatus(`pin ${pin} = ${state ? 'ON' : 'OFF'}`, 'ok');
+      setTimeout(() => setStatus('idle', ''), 2000);
+    });
+    sock.on('gpio-snapshot', (snapshot) => {
+      Object.assign(gpioState, snapshot || {});
+      PIN_CONFIG.forEach(c => renderPin(c.pin));
+    });
+    sock.on('command-queued', ({ pin, state }) => {
+      setStatus(`queued pin ${pin}`, 'busy');
+    });
+  }
+})();
