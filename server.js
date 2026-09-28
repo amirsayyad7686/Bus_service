@@ -33,7 +33,12 @@ async function main() {
   app.set('views', path.join(__dirname, 'views'));
 
   // ---------- global middleware ----------
-  app.use(helmet({ contentSecurityPolicy: false }));   // CSP off for CDN tiles
+  app.use(helmet({
+  contentSecurityPolicy: false,
+  crossOriginOpenerPolicy: false,
+  crossOriginResourcePolicy: false,
+  crossOriginEmbedderPolicy: false
+}));
   app.use(express.json({ limit: '4mb' }));
   app.use(express.urlencoded({ extended: true }));
   app.use(cookieParser());
