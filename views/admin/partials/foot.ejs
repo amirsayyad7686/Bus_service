@@ -1,0 +1,36 @@
+<script>
+  (function () {
+    const toggle  = document.getElementById('adminToggle');
+    const sidebar = document.getElementById('adminSidebar');
+    const overlay = document.getElementById('adminOverlay');
+    if (!toggle) return;
+
+    function close() {
+      sidebar.classList.remove('open');
+      overlay.classList.remove('open');
+    }
+    function open() {
+      sidebar.classList.add('open');
+      overlay.classList.add('open');
+    }
+
+    toggle.addEventListener('click', () => {
+      sidebar.classList.contains('open') ? close() : open();
+    });
+    overlay.addEventListener('click', close);
+  })();
+
+  // client-side search filter
+  (function () {
+    const input = document.getElementById('adminSearch');
+    if (!input) return;
+    input.addEventListener('input', () => {
+      const q = input.value.toLowerCase().trim();
+      document.querySelectorAll('tbody tr').forEach(tr => {
+        tr.style.display = (!q || tr.textContent.toLowerCase().includes(q)) ? '' : 'none';
+      });
+    });
+  })();
+</script>
+</body>
+</html>

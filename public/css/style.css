@@ -572,3 +572,94 @@ html, body {
 .pwr-sub { font-size: 9px; color: #4a6673; font-family: monospace; }
 
 @media (max-width: 400px) { .pwr-grid { grid-template-columns: 1fr; } }
+
+
+
+/* ========== AUTH & ADMIN ========== */
+.auth-body {
+  min-height: 100vh; display: flex; align-items: center; justify-content: center;
+  background: var(--bg-deep);
+}
+.auth-card {
+  width: 340px; padding: 24px; background: var(--card-bg);
+  border: 1px solid var(--card-border); border-radius: 16px;
+}
+.auth-card h1 { font-size: 20px; margin: 0 0 16px; color: #c4e9f5; }
+.auth-card input {
+  width: 100%; padding: 10px; margin-bottom: 10px;
+  background: #000; color: #7fffa5; border: 1px solid var(--card-border);
+  border-radius: 6px; font-family: inherit;
+}
+.auth-card button {
+  width: 100%; padding: 10px; background: #0e4a2e;
+  border: 1px solid #25d366; color: #7fffa5; border-radius: 6px;
+  font-family: inherit; font-weight: 600; cursor: pointer;
+}
+.auth-card button:hover { background: #25d366; color: #101820; }
+.auth-error   { background: #2a1014; border: 1px solid #551c24; color: #ff8c8c; padding: 8px; border-radius: 6px; margin-bottom: 12px; font-size: 12px; }
+.auth-success { background: #08261a; border: 1px solid #166b3a; color: #7fffa5; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: 12px; }
+.auth-alt     { font-size: 12px; text-align: center; color: var(--text-muted); }
+.auth-alt a   { color: var(--accent-cyan); }
+
+.app-nav {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 16px; background: #0d161d;
+  border-bottom: 1px solid #1c2a34; position: sticky; top: 0; z-index: 100;
+}
+.nav-left  { display: flex; align-items: center; gap: 8px; }
+.nav-title { color: #7fdcff; font-weight: 700; letter-spacing: .5px; }
+.nav-right { display: flex; align-items: center; gap: 12px; font-size: 12px; }
+.nav-link  { color: var(--accent-teal); text-decoration: none; }
+.nav-link:hover { color: var(--accent-cyan); }
+.nav-user  { color: var(--text-muted); }
+.nav-logout { color: #ff8c8c; }
+
+.profile-card {
+  max-width: 400px; margin: 40px auto; padding: 24px;
+  background: var(--card-bg); border: 1px solid var(--card-border);
+  border-radius: 16px;
+}
+.profile-card label { display: block; margin-bottom: 12px; font-size: 12px; color: var(--text-muted); }
+.profile-card input {
+  width: 100%; padding: 10px; margin-top: 4px;
+  background: #000; color: #7fffa5; border: 1px solid var(--card-border);
+  border-radius: 6px;
+}
+.profile-card button {
+  padding: 10px 20px; background: #0e4a2e; border: 1px solid #25d366;
+  color: #7fffa5; border-radius: 6px; cursor: pointer;
+}
+
+.admin-wrap { padding: 20px; max-width: 1100px; margin: 0 auto; }
+.admin-table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 12px; }
+.admin-table th { text-align: left; padding: 8px; color: var(--accent-cyan);
+                  border-bottom: 1px solid var(--card-border); }
+.admin-table td { padding: 6px 8px; border-bottom: 1px solid #0e1d26; }
+.admin-table input[type=text], .admin-table input:not([type]) {
+  background: #000; color: #7fffa5; border: 1px solid #1c2a34;
+  padding: 4px 6px; border-radius: 4px; font-family: inherit; width: 100%;
+}
+.admin-form { display: flex; gap: 8px; margin: 12px 0; }
+.admin-form input { flex: 1; padding: 8px; background: #000; color: #7fffa5;
+                    border: 1px solid var(--card-border); border-radius: 4px; }
+.admin-form button { padding: 8px 16px; background: #0e4a2e; border: 1px solid #25d366;
+                     color: #7fffa5; border-radius: 4px; cursor: pointer; }
+.mini { background: #182028; color: #7fffa5; border: 1px solid #3a5a4a;
+        padding: 4px 8px; border-radius: 4px; font-size: 11px; cursor: pointer; }
+.mini.danger { border-color: #6a2020; color: #ff8c8c; }
+.reveal-secret {
+  font-family: monospace; background: #000; padding: 10px;
+  border-radius: 4px; margin: 6px 0; user-select: all; word-break: break-all;
+}
+.admin-nav {
+  display: flex; align-items: center; gap: 16px;
+  padding: 10px 20px; background: #0d161d;
+  border-bottom: 1px solid #1c2a34; font-size: 13px;
+}
+.admin-nav a { color: var(--accent-teal); text-decoration: none; }
+.admin-nav a:hover { color: var(--accent-cyan); }
+.admin-badge {
+  background: #6a2020; color: #ff8c8c;
+  padding: 3px 10px; border-radius: 4px;
+  font-size: 11px; font-weight: 700; letter-spacing: 1px;
+}

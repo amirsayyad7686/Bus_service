@@ -1,13 +1,36 @@
+
+
+
+
+
 {
-  "name": "mc60-dashboard",
+  "name": "bus-service",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-     "push": "git add . && git commit -m \"auto deploy\" && git push"
+    "start":     "node server.js",
+    "push": "git add . && git commit -m \"auto deploy\" && git push",
+    "dev":       "cross-env NODE_ENV=development nodemon server.js",
+    "prod":      "cross-env NODE_ENV=production node server.js",
+    "prod:pm2":  "pm2 start server.js --name bus-service --env production",
+    "reload":    "pm2 reload bus-service",
+    "logs":      "pm2 logs bus-service --lines 100",
+    "stop":      "pm2 stop bus-service"
   },
   "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "cookie-parser": "^1.4.6",
+    "dotenv": "^16.4.5",
+    "ejs": "^3.1.10",
     "express": "^4.19.2",
+    "express-rate-limit": "^7.4.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.6.0",
     "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3",
+    "nodemon": "^3.1.4"
   }
 }

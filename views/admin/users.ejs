@@ -1,0 +1,119 @@
+<%- include('partials/head', { title: 'Users' }) %>
+
+<div class="admin-layout">
+  <%- include('partials/sidebar', { admin, page }) %>
+
+  <main class="admin-main">
+    <div class="admin-header">
+      <button class="admin-mobile-toggle" id="adminToggle">☰</button>
+      <div class="admin-title-group">
+        <h1>Users</h1>
+        <p>Manage client accounts and their devices</p>
+      </div>
+    </div>
+
+    <!-- Stats -->
+    <div class="admin-stats">
+      <div class="admin-stat">
+        <div class="admin-stat-label">Total Users</div>
+        <div class="admin-stat-value"><%= users.length %></div>
+        <div class="admin-stat-sub">registered accounts</div>
+      </div>
+      <div class="admin-stat green">
+        <div class="admin-stat-label">Total Devices</div>
+        <div class="admin-stat-value"><%= totalDevices %></div>
+        <div class="admin-stat-sub">provisioned</div>
+      </div>
+      <div class="admin-stat yellow">
+        <div class="admin-stat-label">Assigned</div>
+        <div class="admin-stat-value">
+          <%= users.reduce((s, u) => s + (u.deviceList ? u.deviceList.length : 0), 0) %>
+        </div>
+        <div class="admin-stat-sub">devices with owner</div>
+      </div>
+      <div class="admin-stat red">
+        <div class="admin-stat-label">Unassigned</div>
+        <div class="admin-stat-value">
+          <%= totalDevices - users.reduce((s, u) => s + (u.deviceList ? u.deviceList.length : 0), 0) %>
+        </div>
+        <div class="admin-stat-sub">free devices</div>
+      </div>
+    </div>
+
+    <!-- Toolbar -->
+    <div class="admin-toolbar">
+      <input id="adminSearch" class="admin-search" placeholder="Search by name, email, phone, device...">
+      <a href="/admin/devices" class="admin-btn primary">+ Manage Devices</a>
+    </div>
+
+    <!-- Table -->
+    <% if (users.length === 0) { %>
+      <div class="admin-empty">
+        <div class="admin-empty-icon">👥</div>
+        <div>No users registered yet</div>
+      </div>
+    <% } else { %>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Devices</th>
+              <th>Role</th>
+              <th>Joined</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% users.forEach(u => { %>
+              <tr>
+                <td>
+                  <form method="POST" action="/admin/users/<%= u._id %>/edit" id="f-<%= u._id %>" style="display:contents">
+                    <input type="text" name="name" value="<%= u.name %>">
+                  </form>
+                </td>
+                <td>
+                  <input form="f-<%= u._id %>" type="email" name="email" value="<%= u.email %>">
+                </td>
+                <td>
+                  <input form="f-<%= u._id %>" type="text" name="phone" value="<%= u.phone %>">
+                </td>
+                <td>
+                  <% if (u.deviceList && u.deviceList.length) { %>
+                    <% u.deviceList.forEach(d => { %>
+                      <code style="margin:2px 0;display:inline-block;"><%= d.deviceId %></code>
+                    <% }) %>
+                  <% } else { %>
+                    <span class="admin-badge free">none</span>
+                  <% } %>
+                </td>
+                <td>
+                  <label style="display:flex;align-items:center;gap:6px;">
+                    <input form="f-<%= u._id %>" type="checkbox" name="isAdmin" <%= u.isAdmin ? 'checked' : '' %>>
+                    <span class="admin-badge <%= u.isAdmin ? 'admin' : 'user' %>">
+                      <%= u.isAdmin ? 'ADMIN' : 'USER' %>
+                    </span>
+                  </label>
+                </td>
+                <td><%= u.createdAt ? new Date(u.createdAt).toISOString().slice(0,10) : '—' %></td>
+                <td>
+                  <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                    <button form="f-<%= u._id %>" type="submit" class="admin-btn small">Save</button>
+                    <form method="POST" action="/admin/users/<%= u._id %>/delete" style="display:inline"
+                          onsubmit="return confirm('Delete user <%= u.name %>?')">
+                      <button type="submit" class="admin-btn small danger">Delete</button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+</div>
+
+<%- include('partials/foot') %>

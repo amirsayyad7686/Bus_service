@@ -1,0 +1,110 @@
+<%- include('partials/head', { title: 'Devices' }) %>
+
+<div class="admin-layout">
+  <%- include('partials/sidebar', { admin, page }) %>
+
+  <main class="admin-main">
+    <div class="admin-header">
+      <button class="admin-mobile-toggle" id="adminToggle">☰</button>
+      <div class="admin-title-group">
+        <h1>Devices</h1>
+        <p>Provision devices and assign them to clients</p>
+      </div>
+    </div>
+
+    <!-- Reveal secret (one-time) -->
+    <% if (reveal) { %>
+      <div class="admin-reveal">
+        <h3>✓ Device Provisioned</h3>
+        <div>Device ID: <code><%= revealId %></code></div>
+        <div class="secret"><%= reveal %></div>
+        <small>
+          ⚠️ Copy this secret now — it will never be shown again.<br>
+          Paste it into your ESP32 firmware as <code>DEVICE_SECRET</code>.
+        </small>
+      </div>
+    <% } %>
+
+    <!-- Add device form -->
+    <div class="admin-toolbar">
+      <form method="POST" action="/admin/devices" style="display:flex;gap:8px;flex:1;flex-wrap:wrap;">
+        <input name="deviceId" class="admin-search" placeholder="New device ID (e.g. client23832)" required>
+        <input name="name"     class="admin-search" placeholder="Friendly name (optional)" style="flex:0 0 240px;">
+        <button type="submit" class="admin-btn primary">+ Provision Device</button>
+      </form>
+    </div>
+
+    <!-- Search -->
+    <div class="admin-toolbar">
+      <input id="adminSearch" class="admin-search" placeholder="Search devices...">
+    </div>
+
+    <!-- Table -->
+    <% if (devices.length === 0) { %>
+      <div class="admin-empty">
+        <div class="admin-empty-icon">📡</div>
+        <div>No devices provisioned yet</div>
+        <div style="margin-top:6px;font-size:11px;">Use the form above to add your first device</div>
+      </div>
+    <% } else { %>
+      <div class="admin-table-wrap">
+        <table class="admin-table">
+          <thead>
+            <tr>
+              <th>Device ID</th>
+              <th>Name</th>
+              <th>Owner</th>
+              <th>Last Seen</th>
+              <th>Assign To</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% devices.forEach(d => { %>
+              <tr>
+                <td><code><%= d.deviceId %></code></td>
+                <td><%= d.name || '—' %></td>
+                <td>
+                  <% if (d.owner) { %>
+                    <span class="admin-badge user"><%= d.owner.name %></span>
+                    <div style="font-size:10px;color:#6a8c9e;margin-top:2px;"><%= d.owner.email %></div>
+                  <% } else { %>
+                    <span class="admin-badge free">unassigned</span>
+                  <% } %>
+                </td>
+                <td>
+                  <% if (d.lastSeen) { %>
+                    <div style="font-size:11px;"><%= new Date(d.lastSeen).toLocaleString() %></div>
+                  <% } else { %>
+                    <span class="admin-badge offline">never</span>
+                  <% } %>
+                </td>
+                <td>
+                  <form method="POST" action="/admin/devices/<%= d.deviceId %>/assign" style="display:flex;gap:6px;align-items:center;">
+                    <select name="userId" style="background:#060d13;color:#dbe9f0;border:1px solid #1c2a34;border-radius:6px;padding:5px 6px;font-family:inherit;font-size:11px;min-width:130px;">
+                      <option value="">— none —</option>
+                      <% users.forEach(u => { %>
+                        <option value="<%= u._id %>" <%= (d.owner && String(d.owner._id) === String(u._id)) ? 'selected' : '' %>>
+                          <%= u.name %>
+                        </option>
+                      <% }) %>
+                    </select>
+                    <button type="submit" class="admin-btn small">Set</button>
+                  </form>
+                </td>
+                <td>
+                  <form method="POST" action="/admin/devices/<%= d.deviceId %>/delete" style="display:inline"
+                        onsubmit="return confirm('Delete device <%= d.deviceId %>?')">
+                    <button type="submit" class="admin-btn small danger">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    <% } %>
+  </main>
+</div>
+
+<%- include('partials/foot') %>

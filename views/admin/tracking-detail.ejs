@@ -1,0 +1,451 @@
+<%- include('partials/head', { title: device.deviceId }) %>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  /* ---- Full-height layout ---- */
+  body.admin-body { overflow: hidden; }
+
+  .admin-layout.detail-page { height: 100vh; overflow: hidden; }
+
+  .admin-main.detail-main {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 16px 20px;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  /* ---- Header row ---- */
+  .detail-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+  }
+  .detail-title h1 {
+    margin: 0;
+    font-size: 18px;
+    color: var(--adm-text);
+  }
+  .detail-title .sub {
+    font-size: 11px;
+    color: var(--adm-muted);
+    margin-top: 3px;
+  }
+  .detail-title code {
+    color: var(--adm-teal);
+    background: #060d13;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+  }
+  .detail-topbar-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-shrink: 0;
+  }
+
+  /* ---- Body: map | info ---- */
+  .detail-body {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 1fr 340px;
+    grid-template-rows: 40% 1fr;
+    grid-template-areas:
+      "map    info"
+      "table  table";
+    gap: 12px;
+  }
+
+  .detail-map-wrap {
+    grid-area: map;
+    background: var(--adm-panel);
+    border: 1px solid var(--adm-border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    min-height: 0;
+  }
+  #map { width: 100%; height: 100%; }
+
+  .detail-info {
+    grid-area: info;
+    background: var(--adm-panel);
+    border: 1px solid var(--adm-border);
+    border-radius: 12px;
+    padding: 12px 14px;
+    overflow-y: auto;
+    min-height: 0;
+  }
+  .detail-info h3 {
+    margin: 0 0 10px;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--adm-cyan);
+  }
+  .detail-info .kv {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    padding: 5px 0;
+    border-bottom: 1px solid #0e1d26;
+  }
+  .detail-info .kv:last-child { border-bottom: none; }
+  .detail-info .kv span:first-child { color: var(--adm-muted); }
+  .detail-info .kv span:last-child  { color: var(--adm-text); font-variant-numeric: tabular-nums; }
+
+  /* ---- Table card ---- */
+  .detail-table-wrap {
+    grid-area: table;
+    background: var(--adm-panel);
+    border: 1px solid var(--adm-border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .detail-table-head {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--adm-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .detail-table-head h3 {
+    margin: 0;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--adm-cyan);
+  }
+  .detail-table-head .meta {
+    font-size: 11px;
+    color: var(--adm-muted);
+  }
+
+  .detail-table-scroll {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
+  .detail-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+  }
+  .detail-table thead {
+    position: sticky;
+    top: 0;
+    background: #0a141b;
+    z-index: 1;
+  }
+  .detail-table th {
+    text-align: left;
+    padding: 8px 12px;
+    color: var(--adm-cyan);
+    font-size: 10px;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    border-bottom: 1px solid var(--adm-border);
+    white-space: nowrap;
+  }
+  .detail-table td {
+    padding: 7px 12px;
+    border-bottom: 1px solid #0e1d26;
+    color: var(--adm-text);
+    white-space: nowrap;
+  }
+  .detail-table tbody tr:hover { background: #0e1a22; }
+  .detail-table tbody tr:first-child td { color: var(--adm-cyan); }
+
+  /* ---- Empty state ---- */
+  .map-empty {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 8px;
+    color: var(--adm-muted); font-size: 12px;
+    background: rgba(10,16,23,0.85);
+    pointer-events: none; z-index: 500;
+    transition: opacity 0.25s;
+  }
+  .map-empty.hidden { opacity: 0; }
+  .map-empty .icon { font-size: 40px; opacity: 0.4; }
+
+  /* ---- Leaflet dark theme (same as list page) ---- */
+  .leaflet-container { background: #030a10; }
+  .leaflet-tile {
+    filter: brightness(0.7) contrast(1.2) saturate(0.65) hue-rotate(185deg) invert(0.94);
+  }
+  .leaflet-popup-content-wrapper {
+    background: #0d161d; color: var(--adm-text);
+    border: 1px solid var(--adm-border); border-radius: 8px;
+  }
+  .leaflet-popup-tip { background: #0d161d; }
+  .leaflet-popup-content { font-family: monospace; font-size: 11px; }
+  .leaflet-control-attribution {
+    background: rgba(10,20,27,0.7) !important;
+    color: #6f8899 !important; font-size: 9px !important;
+  }
+  .leaflet-bar a {
+    background: #0d161d !important;
+    color: #dbe9f0 !important;
+    border-color: var(--adm-border) !important;
+  }
+
+  /* ---- Responsive ---- */
+  @media (max-width: 1100px) {
+    .detail-body { grid-template-columns: 1fr 300px; }
+  }
+  @media (max-width: 860px) {
+    body.admin-body { overflow: auto; }
+    .admin-layout.detail-page { height: auto; }
+    .admin-main.detail-main { height: auto; padding: 12px; }
+    .detail-body {
+      grid-template-columns: 1fr;
+      grid-template-rows: 45vh auto auto;
+      grid-template-areas:
+        "map"
+        "info"
+        "table";
+    }
+    .detail-map-wrap { min-height: 300px; }
+    .detail-info { max-height: none; }
+    .detail-table-scroll { max-height: 50vh; }
+  }
+</style>
+
+<div class="admin-layout detail-page">
+  <%- include('partials/sidebar', { admin, page }) %>
+
+  <main class="admin-main detail-main">
+
+    <div class="detail-topbar">
+      <button class="admin-mobile-toggle" id="adminToggle">☰</button>
+
+      <div class="detail-title">
+        <h1><%= device.name || device.deviceId %></h1>
+        <div class="sub">
+          <code><%= device.deviceId %></code>
+          <% if (device.owner) { %>
+            &nbsp;·&nbsp; owner: <strong><%= device.owner.name %></strong>
+          <% } else { %>
+            &nbsp;·&nbsp; <span class="admin-badge free">unassigned</span>
+          <% } %>
+        </div>
+      </div>
+
+      <div class="detail-topbar-actions">
+        <span class="live-badge" id="liveBadge">live · 2s</span>
+        <button class="admin-btn small" id="recenterBtn">Recenter</button>
+        <a href="/admin/tracking" class="admin-btn small">← All devices</a>
+      </div>
+    </div>
+
+    <div class="detail-body">
+
+      <div class="detail-map-wrap">
+        <div id="map"></div>
+        <div class="map-empty" id="mapEmpty">
+          <div class="icon">🛰</div>
+          <div>No GPS fix yet</div>
+        </div>
+      </div>
+
+      <div class="detail-info">
+        <h3>Latest sample</h3>
+        <div id="infoContent"><em style="color:#6a8c9e;">waiting…</em></div>
+      </div>
+
+      <div class="detail-table-wrap">
+        <div class="detail-table-head">
+          <h3>History</h3>
+          <span class="meta">
+            <span id="bufCount">0</span> / <span id="bufMax">1000</span> points
+            · oldest dropped on overflow
+          </span>
+        </div>
+        <div class="detail-table-scroll">
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>#</th><th>Time</th><th>Lat</th><th>Lon</th>
+                <th>Speed</th><th>Pitch</th><th>Roll</th><th>Yaw</th>
+                <th>gx</th><th>gy</th><th>gz</th>
+                <th>ax</th><th>ay</th><th>az</th>
+                <th>ST</th><th>VP</th><th>LED2</th>
+              </tr>
+            </thead>
+            <tbody id="tableBody"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<%- include('partials/foot') %>
+
+<script>
+(function () {
+  const DEVICE_ID = '<%= device.deviceId %>';
+
+  /* ---------- MAP ---------- */
+  const map = L.map('map', { preferCanvas: true }).setView([29.5918, 52.5837], 14);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+
+  setTimeout(() => map.invalidateSize(), 100);
+  window.addEventListener('resize', () => map.invalidateSize());
+
+  const color = (() => {
+    let h = 0;
+    for (let i = 0; i < DEVICE_ID.length; i++) h = (h * 31 + DEVICE_ID.charCodeAt(i)) & 0xffffffff;
+    return `hsl(${Math.abs(h) % 360}, 82%, 60%)`;
+  })();
+
+  const glow  = L.polyline([], { color, weight: 12, opacity: 0.18 }).addTo(map);
+  const trail = L.polyline([], { color, weight: 3.5, opacity: 0.95 }).addTo(map);
+  const startMarker = L.circleMarker([0,0], {
+    radius: 6, color: '#0a1017', weight: 2,
+    fillColor: '#38b6ff', fillOpacity: 1
+  }).addTo(map);
+  const halo  = L.circleMarker([0,0], { radius: 16, color, weight: 1, opacity: 0.5, fill: false }).addTo(map);
+  const marker = L.circleMarker([0,0], {
+    radius: 9, color: '#0a1017', weight: 2,
+    fillColor: color, fillOpacity: 1
+  }).addTo(map);
+
+  let pulse = 0;
+  function pulseLoop() {
+    pulse = (pulse + 0.15) % (Math.PI * 2);
+    halo.setRadius(14 + Math.sin(pulse) * 4);
+    setTimeout(pulseLoop, 40);
+  }
+  pulseLoop();
+
+  /* ---------- INFO CARD ---------- */
+  function renderInfo(p) {
+    if (!p) return '<em style="color:#6a8c9e;">no data yet</em>';
+    const f = (v, n=2) => (typeof v === 'number' ? v.toFixed(n) : '—');
+    const t = p.ts ? new Date(p.ts).toLocaleString() : '—';
+    return `
+      <div class="kv"><span>Time</span><span>${t}</span></div>
+      <div class="kv"><span>Latitude</span><span>${f(p.lat, 6)}</span></div>
+      <div class="kv"><span>Longitude</span><span>${f(p.lon, 6)}</span></div>
+      <div class="kv"><span>Speed</span><span>${f(p.speed, 2)} km/h</span></div>
+      <div class="kv"><span>Pitch</span><span>${f(p.pitch, 2)}°</span></div>
+      <div class="kv"><span>Roll</span><span>${f(p.roll, 2)}°</span></div>
+      <div class="kv"><span>Yaw</span><span>${f(p.yaw, 2)}°</span></div>
+      <div class="kv"><span>Gyro X</span><span>${f(p.gx, 2)} °/s</span></div>
+      <div class="kv"><span>Gyro Y</span><span>${f(p.gy, 2)} °/s</span></div>
+      <div class="kv"><span>Gyro Z</span><span>${f(p.gz, 2)} °/s</span></div>
+      <div class="kv"><span>Accel X</span><span>${f(p.ax, 3)} g</span></div>
+      <div class="kv"><span>Accel Y</span><span>${f(p.ay, 3)} g</span></div>
+      <div class="kv"><span>Accel Z</span><span>${f(p.az, 3)} g</span></div>
+      <div class="kv"><span>Power ST</span><span>${p.st === 1 ? 'VIN1' : p.st === 0 ? 'VIN2' : '—'}</span></div>
+      <div class="kv"><span>Sensor VP</span><span>${p.vp || 0}</span></div>
+      <div class="kv"><span>SM5308 LED2</span><span>${p.led2 ?? '—'}</span></div>
+    `;
+  }
+
+  /* ---------- TABLE ---------- */
+  const tableBody = document.getElementById('tableBody');
+  const bufCount  = document.getElementById('bufCount');
+  const bufMax    = document.getElementById('bufMax');
+  const mapEmpty  = document.getElementById('mapEmpty');
+
+  function renderTable(points) {
+    bufCount.textContent = points.length;
+
+    const rev = [...points].reverse();
+    const rows = rev.map((p, i) => {
+      const f = (v, n=2) => (typeof v === 'number' ? v.toFixed(n) : '—');
+      const t = p.ts ? new Date(p.ts).toLocaleTimeString() : '—';
+      const st = p.st === 1 ? 'VIN1' : p.st === 0 ? 'VIN2' : '—';
+      return `<tr>
+        <td>${points.length - i}</td>
+        <td>${t}</td>
+        <td>${f(p.lat,6)}</td>
+        <td>${f(p.lon,6)}</td>
+        <td>${f(p.speed,1)}</td>
+        <td>${f(p.pitch,1)}</td>
+        <td>${f(p.roll,1)}</td>
+        <td>${f(p.yaw,1)}</td>
+        <td>${f(p.gx,2)}</td>
+        <td>${f(p.gy,2)}</td>
+        <td>${f(p.gz,2)}</td>
+        <td>${f(p.ax,3)}</td>
+        <td>${f(p.ay,3)}</td>
+        <td>${f(p.az,3)}</td>
+        <td>${st}</td>
+        <td>${p.vp || 0}</td>
+        <td>${p.led2 ?? '—'}</td>
+      </tr>`;
+    }).join('');
+
+    tableBody.innerHTML = rows;
+  }
+
+  /* ---------- REFRESH ---------- */
+  let firstFit = false;
+
+  async function refresh() {
+    try {
+      const r = await fetch(`/admin/api/tracking/${encodeURIComponent(DEVICE_ID)}?limit=1000`);
+      const j = await r.json();
+      if (!j.ok) return;
+
+      bufMax.textContent = j.max;
+
+      const pts = j.points.filter(p => Math.abs(p.lat) > 0.0001 && Math.abs(p.lon) > 0.0001);
+      const latlngs = pts.map(p => [p.lat, p.lon]);
+
+      glow.setLatLngs(latlngs);
+      trail.setLatLngs(latlngs);
+
+      mapEmpty.classList.toggle('hidden', latlngs.length > 0);
+
+      if (latlngs.length) {
+        startMarker.setLatLng(latlngs[0]);
+        marker.setLatLng(latlngs[latlngs.length - 1]);
+        halo.setLatLng(latlngs[latlngs.length - 1]);
+
+        if (!firstFit) {
+          map.fitBounds(L.latLngBounds(latlngs).pad(0.25));
+          firstFit = true;
+        }
+      }
+
+      const latest = j.points[j.points.length - 1] || null;
+      document.getElementById('infoContent').innerHTML = renderInfo(latest);
+
+      renderTable(j.points);
+    } catch (err) {
+      console.error('[detail]', err);
+    }
+  }
+
+  document.getElementById('recenterBtn').addEventListener('click', () => {
+    const latlngs = trail.getLatLngs();
+    if (latlngs.length) map.fitBounds(L.latLngBounds(latlngs).pad(0.25));
+  });
+
+  refresh();
+  setInterval(refresh, 2000);
+})();
+</script>

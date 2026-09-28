@@ -139,6 +139,7 @@ textarea { width: 100%; min-height: 52px; resize: vertical; }
 }
 .pwr-item.ok   { background: #08261a; border-color: #166b3a; }
 .pwr-item.warn { background: #241e08; border-color: #6a5620; }
+.pwr-item.err  { background: #2a0f14; border-color: #6a2020; }
 
 .pwr-label {
   font-size: 10px;
@@ -154,6 +155,7 @@ textarea { width: 100%; min-height: 52px; resize: vertical; }
 }
 .pwr-item.ok   .pwr-value { color: #25d366; }
 .pwr-item.warn .pwr-value { color: #ffd866; }
+.pwr-item.err  .pwr-value { color: #ff5555; }
 
 .pwr-sub {
   font-size: 9px;
@@ -227,21 +229,25 @@ textarea { width: 100%; min-height: 52px; resize: vertical; }
 <div class="card">
   <h2>Power Rail</h2>
   <div class="pwr-grid">
+
     <div class="pwr-item" id="pwrStItem">
       <div class="pwr-label">LM66200 ST</div>
       <div class="pwr-value" id="pwrSt">—</div>
-      <div class="pwr-sub">IO4 · rail status</div>
+      <div class="pwr-sub">IO4 · VIN1/VIN2 select</div>
     </div>
+
     <div class="pwr-item" id="pwrVpItem">
       <div class="pwr-label">Sensor VP</div>
       <div class="pwr-value" id="pwrVp">— V</div>
-      <div class="pwr-sub">IO36 · ADC</div>
+      <div class="pwr-sub">IO36 · ST voltage</div>
     </div>
+
     <div class="pwr-item" id="pwrLedItem">
       <div class="pwr-label">SM5308 LED2</div>
       <div class="pwr-value" id="pwrLed">—</div>
-      <div class="pwr-sub">IO23 · charge ind.</div>
+      <div class="pwr-sub" id="pwrLedFreq">IO23 · freq decode</div>
     </div>
+
   </div>
 </div>
 
@@ -379,6 +385,59 @@ function useLive(){
   });
 }
 
+/* ---------- SM5308 LED2 decoder ---------- */
+var LED2_NAMES = [
+  'STANDBY',     // 0
+  'CHARGING',    // 1
+  'CHARGED',     // 2
+  'BOOST <1A',   // 3
+  'BOOST >1A',   // 4
+  'LOW BATTERY', // 5
+  'FAULT',       // 6
+  'UNKNOWN'      // 7
+];
+
+function renderLed2(state, freq){
+  var ledEl   = document.getElementById('pwrLed');
+  var ledFr   = document.getElementById('pwrLedFreq');
+  var ledItem = document.getElementById('pwrLedItem');
+  var s = (typeof state === 'number' && state >= 0 && state < 8) ? state : 7;
+
+  ledEl.textContent = LED2_NAMES[s];
+  if (ledFr) ledFr.textContent = (typeof freq === 'number')
+    ? (freq.toFixed(0) + ' Hz')
+    : 'IO23 · freq decode';
+
+  // color coding
+  if (s === 6)                    ledItem.className = 'pwr-item err';   // fault
+  else if (s === 5)               ledItem.className = 'pwr-item warn';  // low battery
+  else if (s === 1 || s === 2 || s === 3 || s === 4)
+                                  ledItem.className = 'pwr-item ok';    // active
+  else                            ledItem.className = 'pwr-item';
+}
+
+/* ---------- LM66200 ST decoder ---------- */
+function renderST(st){
+  var stEl   = document.getElementById('pwrSt');
+  var stItem = document.getElementById('pwrStItem');
+  if (st === 1)      { stEl.textContent = 'VIN1'; stItem.className = 'pwr-item ok'; }
+  else if (st === 0) { stEl.textContent = 'VIN2'; stItem.className = 'pwr-item warn'; }
+  else               { stEl.textContent = '—';    stItem.className = 'pwr-item'; }
+}
+
+function renderVP(vp){
+  var vpEl   = document.getElementById('pwrVp');
+  var vpItem = document.getElementById('pwrVpItem');
+  if (typeof vp === 'number') {
+    var volts = vp * 3.3 / 4095;
+    vpEl.textContent = volts.toFixed(3) + ' V';
+    vpItem.className = 'pwr-item' + (volts > 0.1 ? ' ok' : '');
+  } else {
+    vpEl.textContent = '—';
+    vpItem.className = 'pwr-item';
+  }
+}
+
 /* ---------- status polling ---------- */
 function refreshStatus(){
   fetch('/status').then(function(r){ return r.json(); }).then(function(j){
@@ -406,37 +465,14 @@ function refreshStatus(){
     document.querySelectorAll('.auto-step').forEach(function(el){
       var p = parseInt(el.dataset.phase, 10);
       el.classList.remove('active', 'done');
-      if (p < phase)       el.classList.add('done');
+      if (p < phase)        el.classList.add('done');
       else if (p === phase) el.classList.add('active');
     });
 
-    // ---- power rail ----
-    var st    = j.st;
-    var vp    = j.vp;
-    var led2  = j.led2;
-
-    var stEl   = document.getElementById('pwrSt');
-    var stItem = document.getElementById('pwrStItem');
-    if (st === 0)       { stEl.textContent = 'OK';    stItem.className = 'pwr-item ok'; }
-    else if (st === 1)  { stEl.textContent = 'FAULT'; stItem.className = 'pwr-item warn'; }
-    else                { stEl.textContent = '—';     stItem.className = 'pwr-item'; }
-
-    var vpEl   = document.getElementById('pwrVp');
-    var vpItem = document.getElementById('pwrVpItem');
-    if (typeof vp === 'number') {
-      var volts = vp * 3.3 / 4095;
-      vpEl.textContent = volts.toFixed(3) + ' V';
-      vpItem.className = 'pwr-item' + (volts > 0.1 ? ' ok' : '');
-    } else {
-      vpEl.textContent = '—';
-      vpItem.className = 'pwr-item';
-    }
-
-    var ledEl   = document.getElementById('pwrLed');
-    var ledItem = document.getElementById('pwrLedItem');
-    if (led2 === 1)       { ledEl.textContent = 'ON';  ledItem.className = 'pwr-item ok'; }
-    else if (led2 === 0)  { ledEl.textContent = 'OFF'; ledItem.className = 'pwr-item'; }
-    else                  { ledEl.textContent = '—';   ledItem.className = 'pwr-item'; }
+    // power rail
+    renderST(j.st);
+    renderVP(j.vp);
+    renderLed2(j.led2, j.led2f);
 
   }).catch(function(){});
 }
@@ -450,30 +486,15 @@ try {
   sock.onmessage = function(ev){
     try {
       var d = JSON.parse(ev.data);
-      // Cube orientation: yaw around Y, pitch around X, roll around Z
+      // Cube orientation
       if (d.pitch !== undefined) {
         document.getElementById('cube').style.transform =
           'rotateX(' + d.pitch + 'deg) rotateY(' + d.yaw + 'deg) rotateZ(' + (-d.roll) + 'deg)';
       }
-      // Live power update over WS too (instant response)
-      if (d.st !== undefined) {
-        var stEl   = document.getElementById('pwrSt');
-        var stItem = document.getElementById('pwrStItem');
-        if (d.st === 0)      { stEl.textContent = 'OK';    stItem.className = 'pwr-item ok'; }
-        else if (d.st === 1) { stEl.textContent = 'FAULT'; stItem.className = 'pwr-item warn'; }
-      }
-      if (d.vp !== undefined) {
-        var v = d.vp * 3.3 / 4095;
-        document.getElementById('pwrVp').textContent = v.toFixed(3) + ' V';
-        document.getElementById('pwrVpItem').className =
-          'pwr-item' + (v > 0.1 ? ' ok' : '');
-      }
-      if (d.led2 !== undefined) {
-        var ledEl = document.getElementById('pwrLed');
-        var ledItem = document.getElementById('pwrLedItem');
-        if (d.led2 === 1) { ledEl.textContent = 'ON';  ledItem.className = 'pwr-item ok'; }
-        else              { ledEl.textContent = 'OFF'; ledItem.className = 'pwr-item'; }
-      }
+      // Live power updates (instant, no polling delay)
+      if (d.st !== undefined)  renderST(d.st);
+      if (d.vp !== undefined)  renderVP(d.vp);
+      if (d.led2 !== undefined) renderLed2(d.led2, d.led2f);
     } catch(e) {}
   };
 } catch(e) {

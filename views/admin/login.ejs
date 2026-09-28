@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Admin Login</title>
+<link rel="stylesheet" href="/css/admin.css">
+<style>
+  body {
+    background: #0a1017;
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0; padding: 20px;
+    font-family: ui-monospace, monospace;
+  }
+  .login-card {
+    width: 100%; max-width: 360px;
+    background: #0d161d;
+    border: 1px solid #1c2a34;
+    border-radius: 16px;
+    padding: 28px 24px;
+  }
+  .login-card h1 {
+    margin: 0 0 6px;
+    color: #00f2fe;
+    font-size: 20px;
+    letter-spacing: 0.5px;
+  }
+  .login-card .sub {
+    color: #6a8c9e;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    margin-bottom: 20px;
+  }
+  .login-card input {
+    width: 100%;
+    padding: 12px 14px;
+    margin-bottom: 12px;
+    background: #060d13;
+    color: #dbe9f0;
+    border: 1px solid #1c2a34;
+    border-radius: 8px;
+    font-family: inherit;
+    font-size: 13px;
+  }
+  .login-card input:focus {
+    outline: none;
+    border-color: #00f2fe;
+  }
+  .login-card button {
+    width: 100%;
+    padding: 12px;
+    background: #0e4a2e;
+    border: 1px solid #25d366;
+    color: #25d366;
+    border-radius: 8px;
+    font-family: inherit;
+    font-weight: 700;
+    font-size: 13px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .login-card button:hover {
+    background: #25d366;
+    color: #0a1017;
+  }
+  .login-error {
+    background: #2a1014;
+    border: 1px solid #6a2020;
+    color: #ff6b6b;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    margin-bottom: 14px;
+  }
+</style>
+</head>
+<body>
+  <div class="login-card">
+    <h1>Admin Access</h1>
+    <div class="sub">Restricted area</div>
+    <% if (error) { %><div class="login-error"><%= error %></div><% } %>
+    <form method="POST" action="/admin/login">
+      <input type="text"     name="email"    placeholder="Admin ID" required autofocus autocomplete="username">
+      <input type="password" name="password" placeholder="Password" required autocomplete="current-password">
+      <button type="submit">Sign in</button>
+    </form>
+  </div>
+</body>
+</html>

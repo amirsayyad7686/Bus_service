@@ -486,9 +486,10 @@ io.on('disconnect', () => {
   c.className = 'badge-status bad';
   c.innerHTML = '<span class="dot"></span> Offline';
 });
-
+const MY_DEVICES = window.__USER__.devices;
 // ---- Single telemetry handler ----
 io.on('telemetry', (t) => {
+  if (!MY_DEVICES.includes(t.deviceId)) return;
   // Speed
   if (t.speed !== undefined) gauge.setSpeed(t.speed);
 

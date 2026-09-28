@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>MC60 Live Tracker</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/css/style.css">
 <script src="/socket.io/socket.io.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script type="importmap">
@@ -16,6 +16,13 @@
 }
 </script>
 </head>
+<script>
+  window.__USER__ = {
+    id: '<%= user._id %>',
+    name: '<%= user.name %>',
+    devices: <%- JSON.stringify(devices.map(d => d.deviceId)) %>
+  };
+</script>
 <body>
 
 <div class="app-container">
@@ -86,35 +93,6 @@
     <!-- Populated by JS from PIN_CONFIG -->
   </div>
 </section>
-<section class="hud-card power-card">
-  <div class="route-header">
-    <div class="card-tag"><span class="icon">🔌</span> POWER RAIL</div>
-    <div class="cmd-status" id="pwrStatus">
-      <span class="cmd-dot"></span>
-      <span id="pwrStatusText">—</span>
-    </div>
-  </div>
-
-  <div class="pwr-grid">
-    <div class="pwr-item" id="pwrStItem">
-      <div class="pwr-label">LM66200 ST</div>
-      <div class="pwr-value" id="pwrSt">—</div>
-      <div class="pwr-sub">IO4 · rail status</div>
-    </div>
-
-    <div class="pwr-item" id="pwrVpItem">
-      <div class="pwr-label">SENSOR VP</div>
-      <div class="pwr-value" id="pwrVp">— V</div>
-      <div class="pwr-sub">IO36 · ADC</div>
-    </div>
-
-    <div class="pwr-item" id="pwrLedItem">
-      <div class="pwr-label">SM5308 LED2</div>
-      <div class="pwr-value" id="pwrLed">—</div>
-      <div class="pwr-sub">IO23 · charge ind.</div>
-    </div>
-  </div>
-</section>
   <!-- 2. Speedometer & ADAS Telemetry -->
   <section class="hud-card speed-card">
     <div class="speed-left">
@@ -181,6 +159,6 @@
   </section>
 </div>
 
-<script type="module" src="/app.js"></script>
+<script type="module" src="/js/app.js"></script>
 </body>
 </html>

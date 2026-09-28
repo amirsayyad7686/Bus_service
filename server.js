@@ -1,318 +1,82 @@
-const net     = require('net');
-const http    = require('http');
-const path    = require('path');
+const path = require('path');
+const envFile = process.env.NODE_ENV === 'production'
+  ? '.env.production'
+  : '.env.development';
+require('dotenv').config({ path: path.join(__dirname, envFile) });
+
+
+const http = require('http');
 const express = require('express');
+const cookieParser = require('cookie-parser');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const { Server } = require('socket.io');
 
-// ---------- Config ----------
-const HTTP_PORT = 5201;
-const TCP_PORT  = 5202;
-const EXPECTED_CLIENT_ID = 'client23832';
+const connectDB = require('./config/db');
+const { createTcpServer } = require('./services/tcpServer');
+const { createCamServer } = require('./services/camTcpServer');
 
-// ---------- Express app ----------
-const app    = express();
-const server = http.createServer(app);
-const io     = new Server(server, { cors: { origin: '*' } });
+const authRoutes = require('./routes/auth');
+const dashRoutes = require('./routes/dashboard');
+const adminRoutes = require('./routes/admin');
+const apiDeviceRoutes = require('./routes/api/device');
 
-app.use(express.static(path.join(__dirname, 'public')));
+async function main() {
+  await connectDB();
 
-// Simple REST endpoint with the latest snapshot
-let latest = null;
-app.get('/api/latest', (req, res) => {
-  if (!latest) return res.status(204).json({ ok: false, msg: 'no data yet' });
-  res.json({ ok: true, ...latest });
-});
+  const app = express();
+  const server = http.createServer(app);
+  const io = new Server(server, { cors: { origin: '*' } });
 
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ ok: true, tcpPort: TCP_PORT, httpPort: HTTP_PORT, up: process.uptime() });
-});
+  // ---------- view engine ----------
+  app.set('view engine', 'ejs');
+  app.set('views', path.join(__dirname, 'views'));
 
-// ---------- TCP server (MC60 → here) ----------
-const FIELDS = ['lat','lon','pitch','roll','yaw','gx','gy','gz','ax','ay','az','speed'];
+  // ---------- global middleware ----------
+  app.use(helmet({ contentSecurityPolicy: false }));   // CSP off for CDN tiles
+  app.use(express.json({ limit: '4mb' }));
+  app.use(express.urlencoded({ extended: true }));
+  app.use(cookieParser());
+  app.use(express.static(path.join(__dirname, 'public')));
 
-function parsePayload(msg) {
-  // Expect: client23832:lat,lon,pitch,roll,yaw,gx,gy,gz,ax,ay,az,speed
-  const colon = msg.indexOf(':');
-  if (colon < 0) return null;
+  app.get('/', (req, res) => res.redirect('/dashboard'));
+  // Rate limit auth endpoints
+  app.use('/login',    rateLimit({ windowMs: 60_000, max: 10 }));
+  app.use('/register', rateLimit({ windowMs: 60_000, max: 10 }));
 
-  const clientId = msg.slice(0, colon);
-  const rest     = msg.slice(colon + 1);
-  if (clientId !== EXPECTED_CLIENT_ID) return null;
-
-  const parts = rest.split(',');
-  if (parts.length < FIELDS.length) return null;
-
-  const out = { clientId, ts: Date.now() };
-  for (let i = 0; i < FIELDS.length; i++) {
-    out[FIELDS[i]] = Number(parts[i]) || 0;
-  }
-  return out;
-}
-// ============================================================
-//  REMOTE COMMAND QUEUE (for GPIO control)
-// ============================================================
-const COMMAND_TTL = 30_000;                    // commands expire after 30 s
-let   commandQueue = [];                       // FIFO of pending commands
-const lastGpioState = {};                      // { pin: 0|1 } — last known pin states
-
-function enqueueCommand(pin, state) {
-  // Coalesce: drop older commands for the same pin
-  commandQueue = commandQueue.filter(c => c.pin !== pin);
-  const cmd = {
-    id: Date.now(),
-    type: 'GPIO',
-    pin: Number(pin),
-    state: state ? 1 : 0,
-    queuedAt: Date.now()
-  };
-  commandQueue.push(cmd);
-  io.emit('command-queued', cmd);
-  console.log(`[CMD] queued GPIO ${cmd.pin} -> ${cmd.state}`);
-  return cmd;
-}
-
-function popCommand() {
-  const now = Date.now();
-  commandQueue = commandQueue.filter(c => now - c.queuedAt < COMMAND_TTL);
-  return commandQueue.shift() || null;
-}
-const tcpServer = net.createServer((socket) => {
-  const addr = `${socket.remoteAddress}:${socket.remotePort}`;
-  console.log(`[TCP] client connected: ${addr}`);
-  socket.setNoDelay(true);
-
-  let buffer = '';
-
-socket.on('data', (data) => {
-  buffer += data.toString();
-  let nl;
-  while ((nl = buffer.indexOf('\n')) >= 0) {
-    const raw = buffer.slice(0, nl).trim();
-    buffer = buffer.slice(nl + 1);
-    if (!raw) continue;
-    console.log(`[TCP] <- ${raw}`);
-
-    // ---- GPIO ACK from ESP32 ----
-    // Format: client23832:ACK:GPIO:<pin>:<state>
-    if (/^client23832:ACK:GPIO:\d+:[01]$/.test(raw)) {
-      const [, pinStr, stateStr] = raw.match(/ACK:GPIO:(\d+):([01])/);
-      const pin = Number(pinStr);
-      const state = Number(stateStr);
-      lastGpioState[pin] = state;
-      io.emit('gpio-state', { pin, state, ts: Date.now() });
-      console.log(`[CMD] ACK GPIO ${pin} -> ${state}`);
-      continue;
-    }
-
-    // ---- Telemetry (with optional PULL trailer) ----
-    const hasPull = raw.endsWith(',PULL');
-    const body = hasPull ? raw.slice(0, -5) : raw;
-
-    const parsed = parsePayload(body);
-    if (parsed) {
-      latest = parsed;
-      io.emit('telemetry', parsed);
-    }
-
-    // If ESP32 asked for commands, answer on the same socket
-    if (hasPull) {
-      const cmd = popCommand();
-      if (cmd) {
-        const line = `CMD:${cmd.type}:${cmd.pin}:${cmd.state}\n`;
-        socket.write(line);
-        console.log(`[CMD] -> ${cmd.type} ${cmd.pin}=${cmd.state}`);
-      }
-    }
-  }
-});
-  socket.on('error', (err) => console.error(`[TCP] error from ${addr}:`, err.message));
-  socket.on('close', () => console.log(`[TCP] client disconnected: ${addr}`));
-});
-
-tcpServer.listen(TCP_PORT, '0.0.0.0', () => {
-  console.log(`[TCP] listening on port ${TCP_PORT}`);
-});
-
-// ---------- Socket.IO ----------
-io.on('connection', (sock) => {
-  console.log(`[WS] browser connected: ${sock.id}`);
-  if (latest) sock.emit('telemetry', latest);
-  sock.on('disconnect', () => console.log(`[WS] browser disconnected: ${sock.id}`));
-  sock.emit('gpio-snapshot', lastGpioState);   // <- new
-});
-
-
-
-// --------------------------------------------------------------
-//  CAMERA STREAM
-// --------------------------------------------------------------
-let latestFrame = null;              // Buffer of the last JPEG
-let lastFrameTime = 0;
-const frameSubscribers = new Set();  // open MJPEG responses
-let camFps = 0;
-let camFrameCounter = 0;
-let camFpsWindowStart = Date.now();
-
-// POST /frame — ESP32-CAM sends raw JPEG bytes here
-app.post(
-  '/frame',
-  express.raw({ type: 'image/jpeg', limit: '4mb' }),
-  (req, res) => {
-    if (!req.body || !Buffer.isBuffer(req.body) || req.body.length === 0) {
-      return res.status(400).send('empty body');
-    }
-    latestFrame   = req.body;
-    lastFrameTime = Date.now();
-
-    // FPS tracking
-    camFrameCounter++;
-    const elapsed = Date.now() - camFpsWindowStart;
-    if (elapsed >= 1000) {
-      camFps = camFrameCounter * 1000 / elapsed;
-      camFrameCounter = 0;
-      camFpsWindowStart = Date.now();
-    }
-
-    // Push to all open MJPEG subscribers
-    const header = Buffer.from(
-      `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${latestFrame.length}\r\n\r\n`
-    );
-    const footer = Buffer.from('\r\n');
-    for (const s of frameSubscribers) {
-      try {
-        s.write(header);
-        s.write(latestFrame);
-        s.write(footer);
-      } catch (e) {
-        frameSubscribers.delete(s);
-      }
-    }
-
-    res.sendStatus(200);
-  }
-);
-
-// GET /stream — MJPEG stream for browsers
-app.get('/stream', (req, res) => {
-  res.writeHead(200, {
-    'Content-Type': 'multipart/x-mixed-replace; boundary=frame',
-    'Cache-Control': 'no-store, no-cache, must-revalidate',
-    'Pragma': 'no-cache',
-    'Connection': 'close'
+  // ---------- broadcast helper ----------
+  const onTelemetry = (obj) => io.emit('telemetry', obj);
+  io.on('connection', (sock) => {
+    console.log(`[WS] browser ${sock.id}`);
   });
 
-  // Send the latest frame immediately so the <img> shows something
-  if (latestFrame) {
-    res.write(`--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${latestFrame.length}\r\n\r\n`);
-    res.write(latestFrame);
-    res.write(`\r\n`);
-  }
+  // ---------- routes ----------
+app.use('/admin', adminRoutes);   // specific prefix first
+app.use('/', authRoutes);
+app.use('/', dashRoutes);
+app.use('/api/device', apiDeviceRoutes);
 
-  frameSubscribers.add(res);
-  req.on('close', () => frameSubscribers.delete(res));
-});
+  // Camera MJPEG endpoints (from old server.js)
+  require('./services/mjpegServer').registerRoutes(app);
 
-// GET /frame.jpg — latest still image (handy for debugging)
-app.get('/frame.jpg', (req, res) => {
-  if (!latestFrame) return res.status(204).send();
-  res.set('Content-Type', 'image/jpeg');
-  res.set('Cache-Control', 'no-store');
-  res.send(latestFrame);
-});
 
-// GET /api/cam — status (last frame time, FPS, subscribers)
-app.get('/api/cam', (req, res) => {
-  res.json({
-    hasFrame:     !!latestFrame,
-    lastFrameAge: lastFrameTime ? (Date.now() - lastFrameTime) : null,
-    fps:          Number(camFps.toFixed(2)),
-    subscribers:  frameSubscribers.size,
-    frameBytes:   latestFrame ? latestFrame.length : 0
-  });
-});
-app.use(express.json());           // must be added before this route
-
-app.post('/api/command', (req, res) => {
-  const { pin, state } = req.body || {};
-  if (pin === undefined || state === undefined) {
-    return res.status(400).json({ ok: false, error: 'pin and state required' });
-  }
-  const cmd = enqueueCommand(pin, state);
-  res.json({ ok: true, cmd });
-});
-
-app.get('/api/gpio', (req, res) => {
-  res.json({ ok: true, states: lastGpioState });
-});
-const CAM_TCP_PORT = 5203;   // ESP32-CAM connects here
-
-// -------- Camera TCP receiver --------
-const camServer = net.createServer((socket) => {
-  const addr = `${socket.remoteAddress}:${socket.remotePort}`;
-  console.log(`[CAM] TCP client connected: ${addr}`);
-  socket.setNoDelay(true);
-
-  let buf = Buffer.alloc(0);
-  let framesThisSecond = 0;
-  let fpsWindowStart = Date.now();
-
-  socket.on('data', (data) => {
-    buf = Buffer.concat([buf, data]);
-
-    // Parse length-prefixed frames
-    while (buf.length >= 4) {
-      const len = buf.readUInt32LE(0);
-      if (len === 0 || len > 2_000_000) {
-        // sanity check — probably out of sync, reset
-        console.warn(`[CAM] bad frame length ${len}, resetting buffer`);
-        buf = Buffer.alloc(0);
-        return;
-      }
-      if (buf.length < 4 + len) break;    // wait for more bytes
-
-      const jpeg = buf.subarray(4, 4 + len);
-      buf = buf.subarray(4 + len);
-
-      // ---- New frame ----
-      latestFrame   = jpeg;
-      lastFrameTime = Date.now();
-
-      framesThisSecond++;
-      const elapsed = Date.now() - fpsWindowStart;
-      if (elapsed >= 1000) {
-        camFps = framesThisSecond * 1000 / elapsed;
-        framesThisSecond = 0;
-        fpsWindowStart = Date.now();
-      }
-
-      // Push to every open MJPEG subscriber
-      const header = Buffer.from(
-        `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`
-      );
-      const footer = Buffer.from('\r\n');
-      for (const s of frameSubscribers) {
-        try {
-          s.write(header);
-          s.write(jpeg);
-          s.write(footer);
-        } catch (e) {
-          frameSubscribers.delete(s);
-        }
-      }
-    }
+    // ---------- 404 & 500 ----------
+  app.use((req, res) => res.status(404).send('404 Not found'));
+  app.use((err, req, res, next) => {
+    console.error('[error]', err);
+    res.status(500).send('500 Server error');
   });
 
-  socket.on('error', (err) => console.error(`[CAM] error from ${addr}:`, err.message));
-  socket.on('close', () => console.log(`[CAM] client disconnected: ${addr}`));
-});
+  
+  // ---------- TCP servers ----------
+  createTcpServer({ io, port: +process.env.TCP_PORT, onTelemetry });
+  createCamServer({ port: +process.env.CAM_TCP_PORT });
 
-camServer.listen(CAM_TCP_PORT, '0.0.0.0', () => {
-  console.log(`[CAM] TCP frame receiver on port ${CAM_TCP_PORT}`);
-});
+  // ---------- start ----------
+  server.listen(+process.env.HTTP_PORT, '0.0.0.0', () => {
+    console.log(`[HTTP] http://localhost:${process.env.HTTP_PORT}`);
+  });
+}
 
-// ---------- Start HTTP ----------
-server.listen(HTTP_PORT, '0.0.0.0', () => {
-  console.log(`[HTTP] dashboard at http://localhost:${HTTP_PORT}`);
-  console.log(`[HTTP] waiting for MC60 TCP data on port ${TCP_PORT}`);
-});
+main().catch(err => { console.error(err); process.exit(1); });
+

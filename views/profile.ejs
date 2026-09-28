@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Profile · MC60 Tracker</title>
+<link rel="stylesheet" href="/css/style.css">
+</head><body>
+<%- include('partials/nav', { user }) %>
+<div class="profile-card">
+  <h1>Profile</h1>
+  <% if (success) { %><div class="auth-success"><%= success %></div><% } %>
+  <% if (error)   { %><div class="auth-error"><%= error %></div><% } %>
+  <form method="POST" action="/profile">
+    <label>Name <input name="name" value="<%= user.name %>"></label>
+    <label>Email <input value="<%= user.email %>" disabled></label>
+    <label>Phone <input name="phone" value="<%= user.phone %>"></label>
+    <button type="submit">Save</button>
+  </form>
+</div>
+</body></html>

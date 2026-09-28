@@ -1,0 +1,500 @@
+<%- include('partials/head', { title: 'Tracking' }) %>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<style>
+  /* ---- Full-height layout: no page scroll on desktop ---- */
+  body.admin-body { overflow: hidden; }
+
+  .admin-layout.track-page {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .admin-main.track-main {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    padding: 16px 20px 16px;
+    gap: 12px;
+    overflow: hidden;
+  }
+
+  /* ---- Compact header row ---- */
+  .track-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    flex-shrink: 0;
+  }
+  .track-title {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+  .track-title h1 {
+    margin: 0;
+    font-size: 18px;
+    letter-spacing: 0.3px;
+    white-space: nowrap;
+  }
+  .track-title .sub {
+    font-size: 11px;
+    color: var(--adm-muted);
+    white-space: nowrap;
+  }
+
+  .track-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+  }
+  .track-controls label {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--adm-muted);
+  }
+  .track-controls select {
+    background: #060d13; color: var(--adm-text);
+    border: 1px solid var(--adm-border);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-family: inherit;
+    font-size: 11px;
+  }
+  .live-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 20px;
+    background: #143a25;
+    color: var(--adm-green);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+  .live-badge::before {
+    content: '';
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--adm-green);
+    box-shadow: 0 0 6px var(--adm-green);
+    animation: pulse-live 1.5s infinite;
+  }
+  @keyframes pulse-live {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.4; }
+  }
+
+  /* ---- Two-column body: map + list, both fill the row ---- */
+  .track-body {
+    flex: 1;
+    min-height: 0;   /* critical: lets children shrink */
+    display: grid;
+    grid-template-columns: 1fr 320px;
+    gap: 12px;
+  }
+
+  .track-map-wrap {
+    background: var(--adm-panel);
+    border: 1px solid var(--adm-border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    min-height: 0;
+  }
+  #map { width: 100%; height: 100%; }
+
+  .track-side {
+    background: var(--adm-panel);
+    border: 1px solid var(--adm-border);
+    border-radius: 12px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .track-side-head {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--adm-border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .track-side-head h3 {
+    margin: 0;
+    font-size: 11px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--adm-cyan);
+  }
+  .track-side-head .count {
+    font-size: 11px;
+    color: var(--adm-muted);
+  }
+  .track-side-list {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 8px;
+  }
+
+  .veh-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 10px;
+    border-radius: 8px;
+    border: 1px solid transparent;
+    margin-bottom: 4px;
+    cursor: pointer;
+    text-decoration: none;
+    color: inherit;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .veh-item:hover {
+    background: #0e1d26;
+    border-color: var(--adm-border);
+  }
+  .veh-dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .veh-info { flex: 1; min-width: 0; }
+  .veh-name {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--adm-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .veh-sub {
+    font-size: 10px;
+    color: var(--adm-muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-top: 2px;
+  }
+  .veh-arrow { color: var(--adm-muted); font-size: 14px; }
+
+  /* ---- Empty state over map ---- */
+  .map-empty {
+    position: absolute;
+    inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 8px;
+    color: var(--adm-muted);
+    font-size: 12px;
+    background: rgba(10,16,23,0.85);
+    pointer-events: none;
+    z-index: 500;
+    transition: opacity 0.25s;
+  }
+  .map-empty.hidden { opacity: 0; pointer-events: none; }
+  .map-empty .icon { font-size: 40px; opacity: 0.4; }
+
+  /* ---- Leaflet dark theme ---- */
+  .leaflet-container { background: #030a10; }
+  .leaflet-tile {
+    filter: brightness(0.7) contrast(1.2) saturate(0.65) hue-rotate(185deg) invert(0.94);
+  }
+  .leaflet-popup-content-wrapper {
+    background: #0d161d;
+    color: var(--adm-text);
+    border: 1px solid var(--adm-border);
+    border-radius: 8px;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.7);
+  }
+  .leaflet-popup-tip { background: #0d161d; }
+  .leaflet-popup-content { margin: 10px 12px; font-size: 11px; font-family: monospace; line-height: 1.5; }
+  .leaflet-popup-content table { border-collapse: collapse; width: 100%; }
+  .leaflet-popup-content td { padding: 1px 0; }
+  .leaflet-popup-content td:first-child { color: #6a8c9e; padding-right: 12px; }
+  .leaflet-popup-content td:last-child  { color: #7fffa5; text-align: right; }
+  .leaflet-control-attribution {
+    background: rgba(10,20,27,0.7) !important;
+    color: #6f8899 !important;
+    font-size: 9px !important;
+  }
+  .leaflet-control-attribution a { color: #00f2fe !important; }
+  .leaflet-bar a {
+    background: #0d161d !important;
+    color: #dbe9f0 !important;
+    border-color: var(--adm-border) !important;
+  }
+
+  /* ---- Responsive ---- */
+  @media (max-width: 1100px) {
+    .track-body { grid-template-columns: 1fr 280px; }
+  }
+  @media (max-width: 860px) {
+    body.admin-body { overflow: auto; }
+    .admin-layout.track-page { height: auto; }
+    .admin-main.track-main {
+      height: auto;
+      padding: 12px;
+    }
+    .track-body {
+      grid-template-columns: 1fr;
+      grid-template-rows: 55vh auto;
+    }
+    .track-map-wrap { min-height: 320px; }
+    .track-side { max-height: 50vh; }
+    .track-topbar { flex-wrap: wrap; }
+  }
+</style>
+
+<div class="admin-layout track-page">
+  <%- include('partials/sidebar', { admin, page }) %>
+
+  <main class="admin-main track-main">
+
+    <div class="track-topbar">
+      <button class="admin-mobile-toggle" id="adminToggle">☰</button>
+
+      <div class="track-title">
+        <h1>Live Tracking</h1>
+        <span class="sub">all vehicles · hover dots for telemetry</span>
+      </div>
+
+      <div class="track-controls">
+        <span class="live-badge">live · 2s</span>
+
+        <label>
+          Trail:
+          <select id="trailLen">
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="300" selected>300</option>
+            <option value="1000">1000</option>
+          </select>
+        </label>
+
+        <button class="admin-btn small" id="recenterBtn">Recenter</button>
+      </div>
+    </div>
+
+    <div class="track-body">
+      <div class="track-map-wrap">
+        <div id="map"></div>
+        <div class="map-empty" id="mapEmpty">
+          <div class="icon">📡</div>
+          <div>Waiting for device data…</div>
+          <div style="font-size:10px;">Devices appear here once they send telemetry</div>
+        </div>
+      </div>
+
+      <aside class="track-side">
+        <div class="track-side-head">
+          <h3>Devices</h3>
+          <span class="count" id="vehCount">0</span>
+        </div>
+        <div class="track-side-list" id="vehList"></div>
+      </aside>
+    </div>
+
+  </main>
+</div>
+
+<%- include('partials/foot') %>
+
+<script>
+(function () {
+  /* ---------- MAP ---------- */
+  const map = L.map('map', {
+    zoomControl: true,
+    attributionControl: true,
+    preferCanvas: true
+  }).setView([29.5918, 52.5837], 12);
+
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; OpenStreetMap'
+  }).addTo(map);
+
+  // force recalculation after layout settles
+  setTimeout(() => map.invalidateSize(), 100);
+  window.addEventListener('resize', () => map.invalidateSize());
+
+  /* ---------- COLORS ---------- */
+  function colorFor(id) {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) & 0xffffffff;
+    return `hsl(${Math.abs(h) % 360}, 82%, 60%)`;
+  }
+
+  /* ---------- LAYERS ---------- */
+  const layers = new Map();
+
+  function ensureLayer(deviceId) {
+    let l = layers.get(deviceId);
+    if (l) return l;
+
+    const color = colorFor(deviceId);
+
+    const glow = L.polyline([], {
+      color, weight: 12, opacity: 0.18,
+      lineJoin: 'round', lineCap: 'round'
+    }).addTo(map);
+
+    const trail = L.polyline([], {
+      color, weight: 3.5, opacity: 0.95,
+      lineJoin: 'round', lineCap: 'round'
+    }).addTo(map);
+
+    const marker = L.circleMarker([0, 0], {
+      radius: 8, color: '#0a1017', weight: 2,
+      fillColor: color, fillOpacity: 1
+    }).addTo(map);
+
+    marker.bindPopup('—', { maxWidth: 280 });
+
+    l = { marker, trail, glow, color };
+    layers.set(deviceId, l);
+    return l;
+  }
+
+  /* ---------- POPUP ---------- */
+  function popupHtml(d) {
+    const p = d.latest || {};
+    const f = (v, n = 2) => (typeof v === 'number' ? v.toFixed(n) : '—');
+    const t = p.ts ? new Date(p.ts).toLocaleTimeString() : '—';
+    const owner = d.owner
+      ? `${d.owner.name}<br><span style="color:#6a8c9e;font-size:10px;">${d.owner.email}</span>`
+      : '<span style="color:#6a8c9e;">unassigned</span>';
+
+    return `
+      <div style="font-weight:700;color:${colorFor(d.deviceId)};margin-bottom:2px;font-size:12px;">
+        ${d.name || d.deviceId}
+      </div>
+      <div style="font-size:9px;color:#6a8c9e;margin-bottom:8px;">
+        ${d.deviceId} · ${d.points} pts
+      </div>
+      <table>
+        <tr><td>Time</td><td>${t}</td></tr>
+        <tr><td>Lat</td><td>${f(p.lat, 6)}</td></tr>
+        <tr><td>Lon</td><td>${f(p.lon, 6)}</td></tr>
+        <tr><td>Speed</td><td>${f(p.speed, 1)} km/h</td></tr>
+        <tr><td>Pitch</td><td>${f(p.pitch, 1)}°</td></tr>
+        <tr><td>Roll</td><td>${f(p.roll, 1)}°</td></tr>
+        <tr><td>Yaw</td><td>${f(p.yaw, 1)}°</td></tr>
+        <tr><td>Gyro</td><td>${f(p.gx,2)} ${f(p.gy,2)} ${f(p.gz,2)}</td></tr>
+        <tr><td>Accel</td><td>${f(p.ax,3)} ${f(p.ay,3)} ${f(p.az,3)}</td></tr>
+        <tr><td>ST</td><td>${p.st === 1 ? 'VIN1' : p.st === 0 ? 'VIN2' : '—'}</td></tr>
+        <tr><td>VP</td><td>${p.vp || 0}</td></tr>
+        <tr><td>LED2</td><td>${p.led2 ?? '—'}</td></tr>
+      </table>
+      <div style="font-size:9px;color:#6a8c9e;margin-top:8px;border-top:1px solid #1c2a34;padding-top:6px;">
+        ${owner}
+      </div>
+    `;
+  }
+
+  /* ---------- SIDE LIST ---------- */
+  const vehList  = document.getElementById('vehList');
+  const vehCount = document.getElementById('vehCount');
+  const mapEmpty = document.getElementById('mapEmpty');
+
+  function renderSide(devices) {
+    vehCount.textContent = devices.length;
+
+    if (!devices.length) {
+      vehList.innerHTML =
+        '<div style="padding:24px 12px;text-align:center;color:#6a8c9e;font-size:11px;">no devices reporting</div>';
+      return;
+    }
+
+    vehList.innerHTML = '';
+
+    devices
+      .sort((a, b) => (a.name || a.deviceId).localeCompare(b.name || b.deviceId))
+      .forEach(d => {
+        const color = colorFor(d.deviceId);
+        const p = d.latest || {};
+        const speed = typeof p.speed === 'number' ? p.speed.toFixed(1) : '—';
+        const last  = p.ts ? new Date(p.ts).toLocaleTimeString() : '—';
+
+        const a = document.createElement('a');
+        a.className = 'veh-item';
+        a.href = '/admin/tracking/' + encodeURIComponent(d.deviceId);
+        a.innerHTML = `
+          <span class="veh-dot" style="background:${color};box-shadow:0 0 8px ${color}"></span>
+          <div class="veh-info">
+            <div class="veh-name">${d.name || d.deviceId}</div>
+            <div class="veh-sub">${speed} km/h · ${last} · ${d.points} pts</div>
+          </div>
+          <span class="veh-arrow">›</span>
+        `;
+        vehList.appendChild(a);
+      });
+  }
+
+  /* ---------- REFRESH ---------- */
+  let trailLen = 300;
+  let firstFitDone = false;
+
+  document.getElementById('trailLen').addEventListener('change', (e) => {
+    trailLen = parseInt(e.target.value, 10) || 300;
+    refresh();
+  });
+
+  document.getElementById('recenterBtn').addEventListener('click', () => {
+    const pts = [];
+    layers.forEach(l => {
+      const last = l.trail.getLatLngs();
+      if (last.length) pts.push(last[last.length - 1]);
+    });
+    if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.3));
+  });
+
+  async function refresh() {
+    try {
+      const r = await fetch(`/admin/api/tracking?limit=${trailLen}`);
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error);
+
+      j.devices.forEach(d => {
+        const l = ensureLayer(d.deviceId);
+        const latlngs = d.trail.map(t => [t[0], t[1]]);
+
+        l.trail.setLatLngs(latlngs);
+        l.glow.setLatLngs(latlngs);
+
+        if (d.latest && Math.abs(d.latest.lat) > 0.0001 && Math.abs(d.latest.lon) > 0.0001) {
+          l.marker.setLatLng([d.latest.lat, d.latest.lon]);
+          l.marker.setStyle({ opacity: 1, fillOpacity: 1 });
+        } else {
+          l.marker.setStyle({ opacity: 0, fillOpacity: 0 });
+        }
+
+        l.marker.setPopupContent(popupHtml(d));
+      });
+
+      mapEmpty.classList.toggle('hidden', j.devices.length > 0);
+
+      if (!firstFitDone && j.devices.length) {
+        const pts = [];
+        j.devices.forEach(d => d.trail.forEach(t => pts.push([t[0], t[1]])));
+        if (pts.length) {
+          map.fitBounds(L.latLngBounds(pts).pad(0.25));
+          firstFitDone = true;
+        }
+      }
+
+      renderSide(j.devices);
+    } catch (err) {
+      console.error('[tracking]', err);
+    }
+  }
+
+  refresh();
+  setInterval(refresh, 2000);
+})();
+</script>

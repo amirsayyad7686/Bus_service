@@ -13,15 +13,13 @@
 
 // ==================== Power / status pins ====================
 #define PIN_LM66200_ST   4      // LM66200 ST status (open-drain, needs pull-up)
-#define PIN_SM5308_LED2  23     // SM5308 LED2 (input from SoC)
-// GPIO36 = SENSOR_VP (ADC1_CH0) — hardware fixed on WROOM-D32
+#define PIN_SM5308_LED2  23     // SM5308 LED2 freq output (needs LED1->BAT mode)
+// GPIO36 = SENSOR_VP (ADC1_CH0) — analog read
 
 // ==================== Remote GPIO control ====================
-// NOTE: IO4 removed — used by LM66200 ST
 const int REMOTE_PINS[]    = {2, 5, 32, 33};
 const int REMOTE_PIN_COUNT = sizeof(REMOTE_PINS) / sizeof(REMOTE_PINS[0]);
 int       gpioState[8]     = {0,0,0,0,0,0,0,0};
-
 String    pendingAck;
 
 // ==================== Extended TCP state ====================
@@ -42,10 +40,10 @@ enum TcpState { TCP_IDLE, TCP_WAIT_PROMPT, TCP_WAIT_SENDOK, TCP_SENT_WAIT, TCP_W
 #define MAG_SCALE        0.92
 
 // ==================== Network ====================
-const char* AP_SSID     = "ESP32_3D";
-const char* AP_PASS     = "12345678";
-const char* APN         = "mtnirancell";
-const char* SERVER_IP   = "181.41.194.124";
+const char* AP_SSID        = "ESP32_3D";
+const char* AP_PASS        = "12345678";
+const char* APN            = "mtnirancell";
+const char* SERVER_IP      = "181.41.194.124";
 const uint16_t SERVER_PORT = 5202;
 
 AsyncWebServer server(80);
@@ -62,10 +60,15 @@ volatile double g_gx = 0, g_gy = 0, g_gz = 0;
 volatile double g_ax = 0, g_ay = 0, g_az = 0;
 
 // ==================== Power status cache ====================
-volatile int   statusSt    = -1;
-volatile int   statusLed2  = -1;
-volatile int   statusVpRaw = 0;
-volatile float statusVpV   = 0.0f;
+volatile int   statusSt    = -1;   // 0 = LOW (VIN2 active), 1 = HIGH (VIN1 active)
+volatile int   statusVpRaw = 0;    // raw ADC
+volatile float statusVpV   = 0.0f; // volts
+
+// --- SM5308 LED2 frequency decode ---
+volatile unsigned long led2EdgeCount = 0;   // ISR counter
+volatile float  led2FreqHz   = 0.0f;
+volatile uint8_t led2State   = 7;   // 0=STANDBY,1=CHARGING,2=DONE,3=BOOST_LOW,
+                                    // 4=BOOST_HIGH,5=LOW_BAT,6=FAULT,7=UNKNOWN
 
 // ==================== MC60 serial buffers ====================
 String serialBuffer;
@@ -90,14 +93,20 @@ unsigned long tcpStateSince = 0;
 bool autoSendEnabled = false;
 unsigned long lastAutoSend = 0;
 unsigned long sendOkCount = 0, sendFailCount = 0;
+unsigned long lastSendOkTime = 0;        // for watchdog
 const unsigned long AUTO_SEND_MS = 1000;
-
-// ==================== Debug ====================
-unsigned long lastSerialPrint = 0;
 
 // ==================== Auto-connect state machine ====================
 uint8_t       autoPhase = 0;
 unsigned long autoPhaseStart = 0;
+
+// ==================== Connection watchdog ====================
+unsigned long lastWatchdogCheck = 0;
+const unsigned long WATCHDOG_INTERVAL_MS = 8000;   // check every 8 s
+const unsigned long WATCHDOG_FAIL_MS     = 15000;  // dead if no OK in 15 s
+
+// ==================== Debug ====================
+unsigned long lastSerialPrint = 0;
 
 // ==================== Command queue ====================
 #define QUEUE_MAX 24
@@ -107,25 +116,79 @@ unsigned long lastCmdTime = 0;
 const unsigned long CMD_GAP_MS = 350;
 
 // ==================================================================
-//  POWER STATUS FUNCTIONS
+//  SM5308 LED2 — FREQUENCY CAPTURE VIA ISR
+// ==================================================================
+void IRAM_ATTR led2Isr() {
+  led2EdgeCount++;
+}
+
+void initLed2Counter() {
+  pinMode(PIN_SM5308_LED2, INPUT);
+  attachInterrupt(digitalPinToInterrupt(PIN_SM5308_LED2),
+                  led2Isr, FALLING);   // count falling edges
+  Serial.println("[LED2] interrupt attached on IO23");
+}
+
+// Called every 250 ms from loop() — measures frequency and decodes state
+void sampleLed2Frequency() {
+  static unsigned long lastWindow = 0;
+  const unsigned long WINDOW_MS = 250;
+  unsigned long now = millis();
+  if (now - lastWindow < WINDOW_MS) return;
+
+  noInterrupts();
+  unsigned long count = led2EdgeCount;
+  led2EdgeCount = 0;
+  interrupts();
+
+  float dt = (now - lastWindow) / 1000.0f;
+  lastWindow = now;
+
+  float freq = count / dt;   // Hz
+  led2FreqHz = freq;
+
+  // Decode against the datasheet table
+  if      (freq <  20)    led2State = 0;   // standby
+  else if (freq <   96)   led2State = 2;   // 64 Hz  — charge complete
+  else if (freq <  190)   led2State = 1;   // 128 Hz — charging
+  else if (freq <  380)   led2State = 3;   // 256 Hz — boost <1A
+  else if (freq <  750)   led2State = 4;   // 512 Hz — boost >1A
+  else if (freq < 1400)   led2State = 5;   // 1 kHz  — low battery
+  else if (freq < 3500)   led2State = 6;   // 2 kHz  — fault
+  else                    led2State = 7;   // unknown
+}
+
+const char* led2StateName(uint8_t s) {
+  switch (s) {
+    case 0: return "STANDBY";
+    case 1: return "CHARGING";
+    case 2: return "CHARGED";
+    case 3: return "BOOST <1A";
+    case 4: return "BOOST >1A";
+    case 5: return "LOW BATTERY";
+    case 6: return "FAULT";
+    default: return "UNKNOWN";
+  }
+}
+
+// ==================================================================
+//  LM66200 ST + VP
 // ==================================================================
 void initStatusPins() {
-  pinMode(PIN_LM66200_ST, INPUT_PULLUP);   // open-drain ST needs a pull-up
-  pinMode(PIN_SM5308_LED2, INPUT);
+  pinMode(PIN_LM66200_ST, INPUT_PULLUP);
   analogReadResolution(12);
-  analogSetPinAttenuation(36, ADC_11db);   // 0–3.3 V range on VP
-  Serial.println("[STATUS] pins initialized (LM66200 ST=IO4, LED2=IO23, VP=IO36)");
+  analogSetPinAttenuation(36, ADC_11db);
+  Serial.println("[STATUS] IO4=ST (pull-up), GPIO36=VP analog");
 }
 
 void readStatusPins() {
   statusSt    = digitalRead(PIN_LM66200_ST);
-  statusLed2  = digitalRead(PIN_SM5308_LED2);
   statusVpRaw = analogRead(36);
   statusVpV   = statusVpRaw * 3.3f / 4095.0f;
 }
 
 // ==================================================================
-//  REMOTE GPIO CONTROL
+//  REMOTE GPIO
 // ==================================================================
 void initRemoteGpio() {
   for (int i = 0; i < REMOTE_PIN_COUNT; i++) {
@@ -153,7 +216,6 @@ void handleIncomingCommand(const String& line) {
     if (REMOTE_PINS[i] == pin) { idx = i; break; }
   }
   if (idx < 0) {
-    Serial.printf("[CMD] unknown pin %d\n", pin);
     pendingAck = "client23832:ACK:GPIO:" + String(pin) + ":ERR";
     return;
   }
@@ -294,14 +356,9 @@ void parseRMC(const String& raw) {
     if (line.charAt(i) == ',') { p[idx++] = line.substring(start, i); start = i + 1; }
   }
   if (idx < 12) p[idx] = line.substring(start);
-
-  if (idx < 8) {
-    Serial.println("[GPS] RMC parse: too few fields");
-    return;
-  }
+  if (idx < 8) return;
 
   gpsSpeed = (p[7].length() > 0) ? p[7].toDouble() * 1.852 : 0.0;
-
   if (p[2] != "A") { gpsValid = false; return; }
 
   double lat = p[3].toDouble();
@@ -321,9 +378,6 @@ void parseRMC(const String& raw) {
   gpsLat = dLat;
   gpsLon = dLon;
   gpsValid = true;
-
-  Serial.printf("[GPS] fix: %.6f, %.6f  speed=%.2f km/h\n",
-                dLat, dLon, (double)gpsSpeed);
 }
 
 // ==================================================================
@@ -336,7 +390,6 @@ void startSend(const String& payload) {
   Serial2.print("AT+QISEND\r\n");
   tcpState = TCP_WAIT_PROMPT;
   tcpStateSince = millis();
-  Serial.printf("[TCP] QISEND start (%d bytes)\n", payload.length());
 }
 
 void tcpStateMachine() {
@@ -364,6 +417,7 @@ void tcpStateMachine() {
         tcpState = TCP_SENT_WAIT;
         tcpStateSince = millis();
         sendOkCount++;
+        lastSendOkTime = millis();
       } else if (millis() - tcpStateSince > 8000) {
         peekBuffer = "";
         tcpState = TCP_IDLE;
@@ -402,75 +456,103 @@ void tcpStateMachine() {
 }
 
 // ==================================================================
-//  AUTO-CONNECT STATE MACHINE
+//  AUTO-CONNECT — FULL STATE MACHINE
 // ==================================================================
+void queueTcpOpen() {
+  String openCmd = "AT+QIOPEN=\"TCP\",\"";
+  openCmd += SERVER_IP;
+  openCmd += "\",";
+  openCmd += String(SERVER_PORT);
+  enqueue(openCmd);
+}
+
+void queueTcpSetup() {
+  enqueue("AT+QIFGCNT=0");
+  enqueue("AT+QICSGP=1,\"" + String(APN) + "\"");
+  enqueue("AT+QIREGAPP");
+  enqueue("AT+QIACT");
+  enqueue("AT+QILOCIP");
+}
+
 void autoConnectTick() {
   unsigned long now = millis();
   unsigned long elapsed = now - autoPhaseStart;
 
   switch (autoPhase) {
 
-    // 0. Wait for MC60 to finish booting
-    case 0:
+    case 0:  // wait for MC60 boot
       if (elapsed > 3000) {
-        Serial.println("[AUTO] phase 0: MC60 warm-up done");
-        autoPhase = 1;
-        autoPhaseStart = now;
+        Serial.println("[AUTO] phase 0 done — starting SIM check");
+        autoPhase = 1; autoPhaseStart = now;
       }
       break;
 
-    // 1. Kick off SIM + network checks
-    case 1:
-      Serial.println("[AUTO] phase 1: checking SIM + network");
+    case 1:  // SIM + CFUN checks
       enqueue("AT");
       enqueue("AT+CPIN?");
       enqueue("AT+CFUN=1");
-      autoPhase = 2;
-      autoPhaseStart = now;
+      autoPhase = 2; autoPhaseStart = now;
       break;
 
-    // 2. Wait for registration to settle, then start PDP
-    case 2:
+    case 2:  // wait for registration
       if (elapsed > 25000) {
-        Serial.println("[AUTO] phase 2: starting PDP setup");
-        enqueue("AT+QIFGCNT=0");
-        enqueue("AT+QICSGP=1,\"" + String(APN) + "\"");
-        enqueue("AT+QIREGAPP");
-        enqueue("AT+QIACT");
-        enqueue("AT+QILOCIP");
-        autoPhase = 3;
-        autoPhaseStart = now;
+        Serial.println("[AUTO] phase 2 — PDP setup");
+        queueTcpSetup();
+        autoPhase = 3; autoPhaseStart = now;
       }
       break;
 
-    // 3. Wait for PDP, then open the TCP socket
-    case 3:
+    case 3:  // wait for PDP, open socket
       if (elapsed > 8000) {
-        Serial.println("[AUTO] phase 3: opening TCP socket");
-        String openCmd = "AT+QIOPEN=\"TCP\",\"";
-        openCmd += SERVER_IP;
-        openCmd += "\",";
-        openCmd += String(SERVER_PORT);
-        enqueue(openCmd);
-        autoPhase = 4;
-        autoPhaseStart = now;
+        Serial.println("[AUTO] phase 3 — opening socket");
+        queueTcpOpen();
+        autoPhase = 4; autoPhaseStart = now;
       }
       break;
 
-    // 4. Wait for CONNECT OK, then enable auto-send
-    case 4:
-      if (elapsed > 5000) {
-        Serial.println("[AUTO] phase 4: enabling auto-send @ 1 Hz");
+    case 4:  // wait for CONNECT OK, enable auto-send
+      if (elapsed > 6000) {
+        Serial.println("[AUTO] phase 4 — enabling auto-send");
         autoSendEnabled = true;
         lastAutoSend = millis();
+        lastSendOkTime = millis();
         autoPhase = 5;
       }
       break;
 
-    // 5. Steady state
-    case 5:
+    case 5:  // online — watchdog handles recovery
     default:
       break;
+  }
+}
+
+// ==================================================================
+//  CONNECTION WATCHDOG — auto-reopen TCP if it dies
+// ==================================================================
+void connectionWatchdog() {
+  unsigned long now = millis();
+  if (now - lastWatchdogCheck < WATCHDOG_INTERVAL_MS) return;
+  lastWatchdogCheck = now;
+
+  // Only run once auto-send has been enabled and we expect traffic
+  if (!autoSendEnabled) return;
+
+  // Still booting the socket — give it time
+  if (autoPhase < 5) return;
+
+  unsigned long sinceOk = now - lastSendOkTime;
+
+  if (sinceOk > WATCHDOG_FAIL_MS) {
+    Serial.printf("[WATCHDOG] no SEND OK for %lu ms — reconnecting\n",
+                  sinceOk);
+
+    // Tear down and reopen
+    enqueue("AT+QICLOSE");
+    queueTcpOpen();
+
+    // Reset the timer so we don't hammer the socket
+    lastSendOkTime = now;
+    sendFailCount++;   // mark this event
   }
 }
 
@@ -478,8 +560,6 @@ void autoConnectTick() {
 //  WEB HANDLERS
 // ==================================================================
 void handleRoot(AsyncWebServerRequest *req) {
-  Serial.printf("[HTTP] serving index, heap=%u, html_len=%u\n",
-                ESP.getFreeHeap(), strlen_P(INDEX_HTML));
   AsyncWebServerResponse *response = req->beginChunkedResponse(
     "text/html",
     [](uint8_t *buffer, size_t maxLen, size_t index) -> size_t {
@@ -491,7 +571,6 @@ void handleRoot(AsyncWebServerRequest *req) {
       return n;
     });
   response->addHeader("Cache-Control", "no-store, no-cache, must-revalidate");
-  response->addHeader("Pragma", "no-cache");
   req->send(response);
 }
 
@@ -511,11 +590,7 @@ void handleCmd(AsyncWebServerRequest *req) {
 }
 
 void handleTcpSetup(AsyncWebServerRequest *req) {
-  enqueue("AT+QIFGCNT=0");
-  enqueue("AT+QICSGP=1,\"" + String(APN) + "\"");
-  enqueue("AT+QIREGAPP");
-  enqueue("AT+QIACT");
-  enqueue("AT+QILOCIP");
+  queueTcpSetup();
   enqueue("AT+QISTATE?");
   req->send(200, "text/plain", "PDP setup queued");
 }
@@ -548,14 +623,14 @@ void handleAuto(AsyncWebServerRequest *req) {
 }
 
 void handleStatus(AsyncWebServerRequest *req) {
-  char buf[512];
+  char buf[560];
   snprintf(buf, sizeof(buf),
     "{\"auto\":%d,\"ok\":%lu,\"fail\":%lu,\"busy\":%d,"
     "\"lat\":%.6f,\"lon\":%.6f,\"gps\":%d,\"speed\":%.2f,"
     "\"pitch\":%.2f,\"roll\":%.2f,\"yaw\":%.2f,"
     "\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f,"
     "\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,"
-    "\"st\":%d,\"led2\":%d,\"vp\":%d,\"phase\":%d}",
+    "\"st\":%d,\"vp\":%d,\"led2\":%u,\"led2f\":%.1f,\"led2s\":%u,\"phase\":%u}",
     autoSendEnabled ? 1 : 0,
     sendOkCount, sendFailCount,
     (tcpState != TCP_IDLE) ? 1 : 0,
@@ -563,7 +638,9 @@ void handleStatus(AsyncWebServerRequest *req) {
     g_pitch, g_roll, g_yaw,
     g_gx, g_gy, g_gz,
     g_ax, g_ay, g_az,
-    statusSt, statusLed2, statusVpRaw, autoPhase);
+    statusSt, statusVpRaw,
+    (unsigned)led2State, led2FreqHz, (unsigned)led2State,
+    (unsigned)autoPhase);
   req->send(200, "application/json", buf);
 }
 
@@ -581,16 +658,14 @@ void onWsEvent(AsyncWebSocket *srv, AsyncWebSocketClient *cli,
 }
 
 // ==================================================================
-//  GNSS boot
+//  GNSS BOOT
 // ==================================================================
 void gnssBoot() {
   delay(2000);
-  Serial.println("GNSS: checking state...");
   Serial2.print("AT+QGNSSC?\r\n");
   delay(500);
   Serial2.print("AT+QGNSSC=1\r\n");
   delay(500);
-  Serial2.print("AT+QGNSSC?\r\n");
   gnssEnabled = true;
 }
 
@@ -601,41 +676,26 @@ void setup() {
   Serial.begin(115200);
   delay(200);
   Serial.println("\n=== ESP32 + MC60 + Sensors ===");
-  Serial.printf("Free heap at boot: %u\n", ESP.getFreeHeap());
 
-  // Status pins first so they're readable throughout boot
   initStatusPins();
-  readStatusPins();
-  Serial.printf("[STATUS] ST=%d  LED2=%d  VP=%d (%.3f V)\n",
-                statusSt, statusLed2, statusVpRaw, statusVpV);
-
-  // Remote GPIO outputs
+  initLed2Counter();       // <— NEW: LED2 frequency counter
   initRemoteGpio();
 
-  // I2C
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(100000);
   delay(50);
 
-  Serial.println("Init MPU...");
   setupMPU();
-  Serial.println("Init MAG...");
   setupMAG();
-
-  Serial.println("Calibrating MPU...");
   calibrateMPU();
-  Serial.println("Calibrating MAG (rotate)...");
   calibrateMAG();
 
-  // MC60 UART + GNSS
   Serial2.begin(MC60_BAUD, SERIAL_8N1, MC60_RX, MC60_TX);
   gnssBoot();
 
-  // WiFi AP + Web server
   WiFi.mode(WIFI_AP);
   WiFi.softAP(AP_SSID, AP_PASS);
-  IPAddress ip = WiFi.softAPIP();
-  Serial.print("AP IP: "); Serial.println(ip);
+  Serial.print("AP IP: "); Serial.println(WiFi.softAPIP());
 
   ws.onEvent(onWsEvent);
   server.addHandler(&ws);
@@ -650,18 +710,12 @@ void setup() {
   server.on("/auto",      HTTP_GET, handleAuto);
   server.on("/status",    HTTP_GET, handleStatus);
 
-  Serial.printf("HTML length: %u bytes\n", strlen_P(INDEX_HTML));
-  Serial.printf("Free heap before server.begin: %u\n", ESP.getFreeHeap());
-
   server.begin();
   Serial.println("HTTP server started. Open http://192.168.4.1");
 
-  // Kick off the auto-connect sequence
-  autoPhase      = 0;
+  autoPhase = 0;
   autoPhaseStart = millis();
   Serial.println("[AUTO] starting auto-connect sequence");
-
-  Serial.printf("Free heap after setup: %u\n", ESP.getFreeHeap());
 }
 
 // ==================================================================
@@ -670,14 +724,17 @@ void setup() {
 void loop() {
   ws.cleanupClients();
 
-  // 0. Status pins (read at ~5 Hz)
+  // Status pins (5 Hz)
   static unsigned long lastStatusRead = 0;
   if (millis() - lastStatusRead >= 200) {
     lastStatusRead = millis();
     readStatusPins();
   }
 
-  // 1. Read MC60
+  // LED2 frequency (every 250 ms window)
+  sampleLed2Frequency();
+
+  // MC60 serial
   while (Serial2.available()) {
     char c = (char)Serial2.read();
 
@@ -707,19 +764,16 @@ void loop() {
   tcpStateMachine();
   pumpQueue();
 
-  // 2. Auto-connect sequence (runs until phase 5)
-  if (autoPhase < 5) {
-    autoConnectTick();
-  }
+  if (autoPhase < 5) autoConnectTick();
+  connectionWatchdog();       // <— NEW: auto-reopen if socket dies
 
-  // 3. Reset request from web
   if (resetRequested) {
     resetRequested = false;
     calibrateMPU();
     calibrateMAG();
   }
 
-  // 4. Sensor update @ ~20 Hz
+  // Sensors @ ~20 Hz
   static unsigned long lastSensor = 0;
   if (micros() - lastSensor >= 50000) {
     lastSensor = micros();
@@ -740,64 +794,55 @@ void loop() {
     if (yawLocal >  180) yawLocal -= 360;
     if (yawLocal < -180) yawLocal += 360;
 
-    g_pitch = pitchLocal;
-    g_roll  = rollLocal;
-    g_yaw   = yawLocal;
+    g_pitch = pitchLocal; g_roll = rollLocal; g_yaw = yawLocal;
     g_gx = gx; g_gy = gy; g_gz = gz;
     g_ax = ax; g_ay = ay; g_az = az;
 
-    char buf[200];
+    char buf[220];
     snprintf(buf, sizeof(buf),
       "{\"pitch\":%.2f,\"roll\":%.2f,\"yaw\":%.2f,"
-      "\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f,"
-      "\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,"
-      "\"st\":%d,\"led2\":%d,\"vp\":%d}",
+      "\"st\":%d,\"vp\":%d,\"led2\":%u,\"led2f\":%.1f}",
       pitchLocal, rollLocal, yawLocal,
-      gx, gy, gz,
-      ax, ay, az,
-      statusSt, statusLed2, statusVpRaw);
+      statusSt, statusVpRaw, (unsigned)led2State, led2FreqHz);
     ws.textAll(buf);
   }
 
-  // 5. Periodic GPS query
   if (gnssEnabled && millis() - lastGpsQuery > GPS_QUERY_MS) {
     lastGpsQuery = millis();
     Serial2.print("AT+QGNSSRD=\"NMEA/RMC\"\r\n");
   }
 
-  // 6. Auto-send
+  // Auto-send
   if (autoSendEnabled && tcpState == TCP_IDLE &&
       millis() - lastAutoSend >= AUTO_SEND_MS) {
     lastAutoSend = millis();
 
     if (pendingAck.length() > 0) {
-      Serial.printf("[TCP] sending ACK: %s\n", pendingAck.c_str());
       startSend(pendingAck);
       pendingAck = "";
     } else {
       char payload[260];
       snprintf(payload, sizeof(payload),
-        "client23832:%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.2f,%d,%d,%d,PULL",
+        "client23832:%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.2f,%d,%d,%u,%u,PULL",
         (double)gpsLat, (double)gpsLon,
         (double)g_pitch, (double)g_roll, (double)g_yaw,
         (double)g_gx, (double)g_gy, (double)g_gz,
         (double)g_ax, (double)g_ay, (double)g_az,
         (double)gpsSpeed,
-        statusSt, statusVpRaw, statusLed2);
+        statusSt, statusVpRaw,
+        (unsigned)led2State, (unsigned)led2State);
       startSend(String(payload));
     }
   }
 
-  // 7. Debug print
   if (millis() - lastSerialPrint >= 1000) {
     lastSerialPrint = millis();
-    Serial.printf("P=%.1f R=%.1f Y=%.1f | GPS=%s %.6f,%.6f spd=%.2f | ST=%d VP=%d LED2=%d | TCP ok=%lu fail=%lu auto=%d phase=%d | heap=%u\n",
+    Serial.printf("P=%.1f R=%.1f Y=%.1f | GPS=%s | ST=%d VP=%d | LED2=%s (%.0f Hz) | TCP ok=%lu fail=%lu auto=%d phase=%u | heap=%u\n",
       g_pitch, g_roll, g_yaw,
       gpsValid ? "OK" : "--",
-      (double)gpsLat, (double)gpsLon, (double)gpsSpeed,
-      statusSt, statusVpRaw, statusLed2,
+      statusSt, statusVpRaw,
+      led2StateName(led2State), led2FreqHz,
       sendOkCount, sendFailCount, autoSendEnabled ? 1 : 0,
-      autoPhase,
-      ESP.getFreeHeap());
+      autoPhase, ESP.getFreeHeap());
   }
 }

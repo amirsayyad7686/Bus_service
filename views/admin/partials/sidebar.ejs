@@ -1,0 +1,33 @@
+<div class="admin-overlay" id="adminOverlay"></div>
+
+<aside class="admin-sidebar" id="adminSidebar">
+  <div class="admin-brand">
+    <div class="admin-brand-icon">A</div>
+    <div class="admin-brand-text">
+      <div class="admin-brand-title">MC60 Admin</div>
+      <div class="admin-brand-sub">Control Panel</div>
+    </div>
+  </div>
+
+  <nav class="admin-menu">
+    <a href="/admin/users"    class="admin-menu-link <%= page === 'users'    ? 'active' : '' %>">
+      <span class="icon">👥</span> <span>Users</span>
+    </a>
+    <a href="/admin/devices"  class="admin-menu-link <%= page === 'devices'  ? 'active' : '' %>">
+      <span class="icon">📡</span> <span>Devices</span>
+    </a>
+    <a href="/admin/tracking" class="admin-menu-link <%= page === 'tracking' ? 'active' : '' %>">
+      <span class="icon">🗺</span> <span>Tracking</span>
+    </a>
+  </nav>
+
+  <div class="admin-sidebar-footer">
+    <div style="margin-bottom:8px;">
+      Logged in as<br>
+      <strong style="color: var(--adm-cyan);"><%= admin.name %></strong>
+    </div>
+    <a href="/admin/logout">
+      <span>⏻</span> <span>Logout</span>
+    </a>
+  </div>
+</aside>
