@@ -390,9 +390,10 @@ const gauge = new HudGauge(document.getElementById('speedGauge'));
 const map = L.map('map', { attributionControl: false, zoomControl: false }).setView([29.6312, 52.5387], 14);
 L.control.zoom({ position: 'topleft' }).addTo(map);
 
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-  maxZoom: 19,
-  attribution: 'Tiles &copy; Esri'
+L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+  maxZoom: 17,
+  subdomains: 'abc',
+  attribution: '&copy; OpenTopoMap (CC-BY-SA)'
 }).addTo(map);
 
 const routeTrail = L.polyline([], {
