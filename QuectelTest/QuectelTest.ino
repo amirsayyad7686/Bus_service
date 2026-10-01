@@ -12,9 +12,9 @@
 #define MC60_BAUD 115200
 
 // ==================== Power / status pins ====================
-#define PIN_LM66200_ST   4      // LM66200 ST status (open-drain, needs pull-up)
-#define PIN_SM5308_LED2  23     // SM5308 LED2 freq output (needs LED1->BAT mode)
-// GPIO36 = SENSOR_VP (ADC1_CH0) — analog read
+#define PIN_LM66200_ST   4
+#define PIN_SM5308_LED2  23
+// GPIO36 = SENSOR_VP (ADC1_CH0)
 
 // ==================== Remote GPIO control ====================
 const int REMOTE_PINS[]    = {2, 5, 32, 33};
@@ -22,7 +22,7 @@ const int REMOTE_PIN_COUNT = sizeof(REMOTE_PINS) / sizeof(REMOTE_PINS[0]);
 int       gpioState[8]     = {0,0,0,0,0,0,0,0};
 String    pendingAck;
 
-// ==================== Extended TCP state ====================
+// ==================== TCP state machine ====================
 enum TcpState { TCP_IDLE, TCP_WAIT_PROMPT, TCP_WAIT_SENDOK, TCP_SENT_WAIT, TCP_WAIT_READ };
 
 // ==================== I2C devices ====================
@@ -46,6 +46,14 @@ const char* APN            = "mtnirancell";
 const char* SERVER_IP      = "181.41.194.124";
 const uint16_t SERVER_PORT = 5202;
 
+// ==================== Device identity (JWT auth) ====================
+const char* DEVICE_ID     = "client23832";             // must match admin panel
+const char* DEVICE_SECRET = "22f2553763d95f5ea35621fa6d3d61d8f9594ef8c46300d8";  // shown once in admin
+String        deviceToken;
+unsigned long lastLoginTime = 0;
+const unsigned long LOGIN_INTERVAL_MS = 5UL * 3600UL * 1000UL;   // re-login every 5 h
+bool          loggedIn = false;
+
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
 
@@ -59,18 +67,17 @@ volatile double g_pitch = 0, g_roll = 0, g_yaw = 0;
 volatile double g_gx = 0, g_gy = 0, g_gz = 0;
 volatile double g_ax = 0, g_ay = 0, g_az = 0;
 
-// ==================== Power status cache ====================
-volatile int   statusSt    = -1;   // 0 = LOW (VIN2 active), 1 = HIGH (VIN1 active)
-volatile int   statusVpRaw = 0;    // raw ADC
-volatile float statusVpV   = 0.0f; // volts
+// ==================== Power status ====================
+volatile int   statusSt    = -1;
+volatile int   statusVpRaw = 0;
+volatile float statusVpV   = 0.0f;
 
-// --- SM5308 LED2 frequency decode ---
-volatile unsigned long led2EdgeCount = 0;   // ISR counter
-volatile float  led2FreqHz   = 0.0f;
-volatile uint8_t led2State   = 7;   // 0=STANDBY,1=CHARGING,2=DONE,3=BOOST_LOW,
-                                    // 4=BOOST_HIGH,5=LOW_BAT,6=FAULT,7=UNKNOWN
+volatile unsigned long led2EdgeCount = 0;
+volatile float   led2FreqHz = 0.0f;
+volatile uint8_t led2State  = 7;   // 0=STANDBY,1=CHARGING,2=CHARGED,3=BOOST<1A,
+                                    // 4=BOOST>1A,5=LOW_BAT,6=FAULT,7=UNKNOWN
 
-// ==================== MC60 serial buffers ====================
+// ==================== MC60 buffers ====================
 String serialBuffer;
 String lineBuffer;
 portMUX_TYPE bufferMux = portMUX_INITIALIZER_UNLOCKED;
@@ -83,7 +90,7 @@ bool            gnssEnabled = false;
 unsigned long   lastGpsQuery = 0;
 const unsigned long GPS_QUERY_MS = 3000;
 
-// ==================== TCP state ====================
+// ==================== TCP ====================
 TcpState tcpState = TCP_IDLE;
 String   tcpPayload;
 String   peekBuffer;
@@ -93,17 +100,17 @@ unsigned long tcpStateSince = 0;
 bool autoSendEnabled = false;
 unsigned long lastAutoSend = 0;
 unsigned long sendOkCount = 0, sendFailCount = 0;
-unsigned long lastSendOkTime = 0;        // for watchdog
+unsigned long lastSendOkTime = 0;
 const unsigned long AUTO_SEND_MS = 1000;
 
-// ==================== Auto-connect state machine ====================
+// ==================== Auto-connect FSM ====================
 uint8_t       autoPhase = 0;
 unsigned long autoPhaseStart = 0;
 
-// ==================== Connection watchdog ====================
+// ==================== Watchdog ====================
 unsigned long lastWatchdogCheck = 0;
-const unsigned long WATCHDOG_INTERVAL_MS = 8000;   // check every 8 s
-const unsigned long WATCHDOG_FAIL_MS     = 15000;  // dead if no OK in 15 s
+const unsigned long WATCHDOG_INTERVAL_MS = 8000;
+const unsigned long WATCHDOG_FAIL_MS     = 15000;
 
 // ==================== Debug ====================
 unsigned long lastSerialPrint = 0;
@@ -116,20 +123,16 @@ unsigned long lastCmdTime = 0;
 const unsigned long CMD_GAP_MS = 350;
 
 // ==================================================================
-//  SM5308 LED2 — FREQUENCY CAPTURE VIA ISR
+//  SM5308 LED2 frequency ISR
 // ==================================================================
-void IRAM_ATTR led2Isr() {
-  led2EdgeCount++;
-}
+void IRAM_ATTR led2Isr() { led2EdgeCount++; }
 
 void initLed2Counter() {
   pinMode(PIN_SM5308_LED2, INPUT);
-  attachInterrupt(digitalPinToInterrupt(PIN_SM5308_LED2),
-                  led2Isr, FALLING);   // count falling edges
+  attachInterrupt(digitalPinToInterrupt(PIN_SM5308_LED2), led2Isr, FALLING);
   Serial.println("[LED2] interrupt attached on IO23");
 }
 
-// Called every 250 ms from loop() — measures frequency and decodes state
 void sampleLed2Frequency() {
   static unsigned long lastWindow = 0;
   const unsigned long WINDOW_MS = 250;
@@ -143,19 +146,17 @@ void sampleLed2Frequency() {
 
   float dt = (now - lastWindow) / 1000.0f;
   lastWindow = now;
-
-  float freq = count / dt;   // Hz
+  float freq = count / dt;
   led2FreqHz = freq;
 
-  // Decode against the datasheet table
-  if      (freq <  20)    led2State = 0;   // standby
-  else if (freq <   96)   led2State = 2;   // 64 Hz  — charge complete
-  else if (freq <  190)   led2State = 1;   // 128 Hz — charging
-  else if (freq <  380)   led2State = 3;   // 256 Hz — boost <1A
-  else if (freq <  750)   led2State = 4;   // 512 Hz — boost >1A
-  else if (freq < 1400)   led2State = 5;   // 1 kHz  — low battery
-  else if (freq < 3500)   led2State = 6;   // 2 kHz  — fault
-  else                    led2State = 7;   // unknown
+  if      (freq <   20)  led2State = 0;
+  else if (freq <   96)  led2State = 2;
+  else if (freq <  190)  led2State = 1;
+  else if (freq <  380)  led2State = 3;
+  else if (freq <  750)  led2State = 4;
+  else if (freq < 1400)  led2State = 5;
+  else if (freq < 3500)  led2State = 6;
+  else                   led2State = 7;
 }
 
 const char* led2StateName(uint8_t s) {
@@ -178,7 +179,6 @@ void initStatusPins() {
   pinMode(PIN_LM66200_ST, INPUT_PULLUP);
   analogReadResolution(12);
   analogSetPinAttenuation(36, ADC_11db);
-  Serial.println("[STATUS] IO4=ST (pull-up), GPIO36=VP analog");
 }
 
 void readStatusPins() {
@@ -196,11 +196,11 @@ void initRemoteGpio() {
     digitalWrite(REMOTE_PINS[i], LOW);
     gpioState[i] = 0;
   }
-  Serial.printf("[GPIO] initialized %d remote pins\n", REMOTE_PIN_COUNT);
+  Serial.printf("[GPIO] %d remote pins initialized\n", REMOTE_PIN_COUNT);
 }
 
 void handleIncomingCommand(const String& line) {
-  Serial.printf("[CMD] received: %s\n", line.c_str());
+  Serial.printf("[CMD] %s\n", line.c_str());
   if (!line.startsWith("CMD:GPIO:")) return;
 
   int c1 = line.indexOf(':', 7);
@@ -216,7 +216,7 @@ void handleIncomingCommand(const String& line) {
     if (REMOTE_PINS[i] == pin) { idx = i; break; }
   }
   if (idx < 0) {
-    pendingAck = "client23832:ACK:GPIO:" + String(pin) + ":ERR";
+    pendingAck = "ACK:GPIO:" + String(pin) + ":ERR";
     return;
   }
 
@@ -224,7 +224,7 @@ void handleIncomingCommand(const String& line) {
   gpioState[idx] = state ? 1 : 0;
   Serial.printf("[GPIO] pin %d -> %d\n", pin, state);
 
-  pendingAck = "client23832:ACK:GPIO:" + String(pin) + ":" + String(state);
+  pendingAck = "ACK:GPIO:" + String(pin) + ":" + String(state);
 }
 
 // ==================================================================
@@ -407,7 +407,6 @@ void tcpStateMachine() {
         peekBuffer = "";
         tcpState = TCP_IDLE;
         sendFailCount++;
-        Serial.println("[TCP] no prompt, aborted");
       }
       break;
 
@@ -422,7 +421,6 @@ void tcpStateMachine() {
         peekBuffer = "";
         tcpState = TCP_IDLE;
         sendFailCount++;
-        Serial.println("[TCP] SEND OK timeout");
       }
       break;
 
@@ -436,11 +434,33 @@ void tcpStateMachine() {
       break;
 
     case TCP_WAIT_READ:
-      if (peekBuffer.indexOf("CMD:GPIO:") >= 0 && peekBuffer.indexOf("\n") >= 0) {
-        int start = peekBuffer.indexOf("CMD:GPIO:");
-        int end   = peekBuffer.indexOf("\n", start);
-        if (end < 0) end = peekBuffer.length();
-        String cmd = peekBuffer.substring(start, end);
+      // Auth responses
+      if (peekBuffer.indexOf("TOKEN:") >= 0) {
+        int s = peekBuffer.indexOf("TOKEN:") + 6;
+        int e = peekBuffer.indexOf('\n', s);
+        if (e < 0) e = peekBuffer.indexOf('\r', s);
+        if (e < 0) e = peekBuffer.length();
+        deviceToken = peekBuffer.substring(s, e);
+        deviceToken.trim();
+        loggedIn = true;
+        lastLoginTime = millis();
+        Serial.printf("[AUTH] token received (%d chars)\n", deviceToken.length());
+        peekBuffer = "";
+        tcpState = TCP_IDLE;
+      } else if (peekBuffer.indexOf("AUTH:FAIL") >= 0) {
+        Serial.println("[AUTH] login FAILED - check DEVICE_SECRET");
+        peekBuffer = "";
+        tcpState = TCP_IDLE;
+      } else if (peekBuffer.indexOf("AUTH:EXPIRED") >= 0) {
+        Serial.println("[AUTH] token expired - re-login");
+        loggedIn = false;
+        peekBuffer = "";
+        tcpState = TCP_IDLE;
+      } else if (peekBuffer.indexOf("CMD:GPIO:") >= 0 && peekBuffer.indexOf("\n") >= 0) {
+        int s = peekBuffer.indexOf("CMD:GPIO:");
+        int e = peekBuffer.indexOf("\n", s);
+        if (e < 0) e = peekBuffer.length();
+        String cmd = peekBuffer.substring(s, e);
         cmd.trim();
         handleIncomingCommand(cmd);
         peekBuffer = "";
@@ -456,7 +476,7 @@ void tcpStateMachine() {
 }
 
 // ==================================================================
-//  AUTO-CONNECT — FULL STATE MACHINE
+//  AUTO-CONNECT FSM
 // ==================================================================
 void queueTcpOpen() {
   String openCmd = "AT+QIOPEN=\"TCP\",\"";
@@ -474,45 +494,47 @@ void queueTcpSetup() {
   enqueue("AT+QILOCIP");
 }
 
+void sendLogin() {
+  String line = "client23832:LOGIN:";
+  line += DEVICE_ID;
+  line += ":";
+  line += DEVICE_SECRET;
+  startSend(line);
+  Serial.println("[AUTH] sending login");
+}
+
 void autoConnectTick() {
   unsigned long now = millis();
   unsigned long elapsed = now - autoPhaseStart;
 
   switch (autoPhase) {
-
-    case 0:  // wait for MC60 boot
-      if (elapsed > 3000) {
-        Serial.println("[AUTO] phase 0 done — starting SIM check");
-        autoPhase = 1; autoPhaseStart = now;
-      }
+    case 0:
+      if (elapsed > 3000) { autoPhase = 1; autoPhaseStart = now; }
       break;
 
-    case 1:  // SIM + CFUN checks
+    case 1:
       enqueue("AT");
       enqueue("AT+CPIN?");
       enqueue("AT+CFUN=1");
       autoPhase = 2; autoPhaseStart = now;
       break;
 
-    case 2:  // wait for registration
+    case 2:
       if (elapsed > 25000) {
-        Serial.println("[AUTO] phase 2 — PDP setup");
         queueTcpSetup();
         autoPhase = 3; autoPhaseStart = now;
       }
       break;
 
-    case 3:  // wait for PDP, open socket
+    case 3:
       if (elapsed > 8000) {
-        Serial.println("[AUTO] phase 3 — opening socket");
         queueTcpOpen();
         autoPhase = 4; autoPhaseStart = now;
       }
       break;
 
-    case 4:  // wait for CONNECT OK, enable auto-send
+    case 4:
       if (elapsed > 6000) {
-        Serial.println("[AUTO] phase 4 — enabling auto-send");
         autoSendEnabled = true;
         lastAutoSend = millis();
         lastSendOkTime = millis();
@@ -520,39 +542,28 @@ void autoConnectTick() {
       }
       break;
 
-    case 5:  // online — watchdog handles recovery
-    default:
-      break;
+    default: break;
   }
 }
 
 // ==================================================================
-//  CONNECTION WATCHDOG — auto-reopen TCP if it dies
+//  WATCHDOG
 // ==================================================================
 void connectionWatchdog() {
   unsigned long now = millis();
   if (now - lastWatchdogCheck < WATCHDOG_INTERVAL_MS) return;
   lastWatchdogCheck = now;
 
-  // Only run once auto-send has been enabled and we expect traffic
-  if (!autoSendEnabled) return;
-
-  // Still booting the socket — give it time
-  if (autoPhase < 5) return;
+  if (!autoSendEnabled || autoPhase < 5) return;
 
   unsigned long sinceOk = now - lastSendOkTime;
-
   if (sinceOk > WATCHDOG_FAIL_MS) {
-    Serial.printf("[WATCHDOG] no SEND OK for %lu ms — reconnecting\n",
-                  sinceOk);
-
-    // Tear down and reopen
+    Serial.printf("[WATCHDOG] no OK for %lu ms - reopening\n", sinceOk);
     enqueue("AT+QICLOSE");
     queueTcpOpen();
-
-    // Reset the timer so we don't hammer the socket
+    loggedIn = false;
     lastSendOkTime = now;
-    sendFailCount++;   // mark this event
+    sendFailCount++;
   }
 }
 
@@ -599,9 +610,7 @@ void handleTcpOpen(AsyncWebServerRequest *req) {
   if (!req->hasParam("h") || !req->hasParam("p")) {
     req->send(400, "text/plain", "missing h/p"); return;
   }
-  String h = req->getParam("h")->value();
-  String p = req->getParam("p")->value();
-  enqueue("AT+QIOPEN=\"TCP\",\"" + h + "\"," + p);
+  enqueue("AT+QIOPEN=\"TCP\",\"" + req->getParam("h")->value() + "\"," + req->getParam("p")->value());
   req->send(200, "text/plain", "QIOPEN queued");
 }
 
@@ -630,17 +639,15 @@ void handleStatus(AsyncWebServerRequest *req) {
     "\"pitch\":%.2f,\"roll\":%.2f,\"yaw\":%.2f,"
     "\"gx\":%.2f,\"gy\":%.2f,\"gz\":%.2f,"
     "\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f,"
-    "\"st\":%d,\"vp\":%d,\"led2\":%u,\"led2f\":%.1f,\"led2s\":%u,\"phase\":%u}",
-    autoSendEnabled ? 1 : 0,
-    sendOkCount, sendFailCount,
+    "\"st\":%d,\"vp\":%d,\"led2\":%u,\"led2f\":%.1f,\"phase\":%u,\"auth\":%d}",
+    autoSendEnabled ? 1 : 0, sendOkCount, sendFailCount,
     (tcpState != TCP_IDLE) ? 1 : 0,
     (double)gpsLat, (double)gpsLon, gpsValid ? 1 : 0, (double)gpsSpeed,
     g_pitch, g_roll, g_yaw,
     g_gx, g_gy, g_gz,
     g_ax, g_ay, g_az,
-    statusSt, statusVpRaw,
-    (unsigned)led2State, led2FreqHz, (unsigned)led2State,
-    (unsigned)autoPhase);
+    statusSt, statusVpRaw, (unsigned)led2State, led2FreqHz,
+    (unsigned)autoPhase, loggedIn ? 1 : 0);
   req->send(200, "application/json", buf);
 }
 
@@ -649,9 +656,8 @@ void handleStatus(AsyncWebServerRequest *req) {
 // ==================================================================
 void onWsEvent(AsyncWebSocket *srv, AsyncWebSocketClient *cli,
                AwsEventType type, void *arg, uint8_t *data, size_t len) {
-  if (type == WS_EVT_CONNECT) {
-    Serial.printf("WS client #%u connected\n", cli->id());
-  } else if (type == WS_EVT_DATA) {
+  if (type == WS_EVT_CONNECT) Serial.printf("WS #%u connected\n", cli->id());
+  else if (type == WS_EVT_DATA) {
     String msg = String((char*)data);
     if (msg.startsWith("reset")) resetRequested = true;
   }
@@ -678,7 +684,7 @@ void setup() {
   Serial.println("\n=== ESP32 + MC60 + Sensors ===");
 
   initStatusPins();
-  initLed2Counter();       // <— NEW: LED2 frequency counter
+  initLed2Counter();
   initRemoteGpio();
 
   Wire.begin(I2C_SDA, I2C_SCL);
@@ -715,7 +721,6 @@ void setup() {
 
   autoPhase = 0;
   autoPhaseStart = millis();
-  Serial.println("[AUTO] starting auto-connect sequence");
 }
 
 // ==================================================================
@@ -724,17 +729,14 @@ void setup() {
 void loop() {
   ws.cleanupClients();
 
-  // Status pins (5 Hz)
   static unsigned long lastStatusRead = 0;
   if (millis() - lastStatusRead >= 200) {
     lastStatusRead = millis();
     readStatusPins();
   }
 
-  // LED2 frequency (every 250 ms window)
   sampleLed2Frequency();
 
-  // MC60 serial
   while (Serial2.available()) {
     char c = (char)Serial2.read();
 
@@ -749,8 +751,7 @@ void loop() {
     }
 
     if (c == '\n') {
-      String ln = lineBuffer;
-      ln.trim();
+      String ln = lineBuffer; ln.trim();
       int rmc = ln.indexOf("$GNRMC");
       if (rmc < 0) rmc = ln.indexOf("$GPRMC");
       if (rmc >= 0) parseRMC(ln.substring(rmc));
@@ -765,7 +766,7 @@ void loop() {
   pumpQueue();
 
   if (autoPhase < 5) autoConnectTick();
-  connectionWatchdog();       // <— NEW: auto-reopen if socket dies
+  connectionWatchdog();
 
   if (resetRequested) {
     resetRequested = false;
@@ -773,7 +774,6 @@ void loop() {
     calibrateMAG();
   }
 
-  // Sensors @ ~20 Hz
   static unsigned long lastSensor = 0;
   if (micros() - lastSensor >= 50000) {
     lastSensor = micros();
@@ -789,8 +789,7 @@ void loop() {
     double mx, my, mz;
     readMAG(mx, my, mz);
     double yawLocal = atan2(my, mx) * 180.0 / PI;
-    const double declinationDeg = -6.93;
-    yawLocal += declinationDeg;
+    yawLocal += -6.93;
     if (yawLocal >  180) yawLocal -= 360;
     if (yawLocal < -180) yawLocal += 360;
 
@@ -812,37 +811,51 @@ void loop() {
     Serial2.print("AT+QGNSSRD=\"NMEA/RMC\"\r\n");
   }
 
-  // Auto-send
+  // Auto-send with JWT auth
   if (autoSendEnabled && tcpState == TCP_IDLE &&
       millis() - lastAutoSend >= AUTO_SEND_MS) {
     lastAutoSend = millis();
 
-    if (pendingAck.length() > 0) {
-      startSend(pendingAck);
-      pendingAck = "";
-    } else {
-      char payload[260];
-      snprintf(payload, sizeof(payload),
-        "client23832:%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.2f,%d,%d,%u,%u,PULL",
-        (double)gpsLat, (double)gpsLon,
-        (double)g_pitch, (double)g_roll, (double)g_yaw,
-        (double)g_gx, (double)g_gy, (double)g_gz,
-        (double)g_ax, (double)g_ay, (double)g_az,
-        (double)gpsSpeed,
-        statusSt, statusVpRaw,
-        (unsigned)led2State, (unsigned)led2State);
-      startSend(String(payload));
+    // re-login every 5 h
+    if (loggedIn && millis() - lastLoginTime > LOGIN_INTERVAL_MS) {
+      loggedIn = false;
     }
+
+    if (!loggedIn) {
+      sendLogin();
+      return;
+    }
+
+    if (pendingAck.length() > 0) {
+      String ack = "client23832:" + deviceToken + ":" + pendingAck;
+      startSend(ack);
+      pendingAck = "";
+      return;
+    }
+
+    char csv[220];
+    snprintf(csv, sizeof(csv),
+      "%.6f,%.6f,%.2f,%.2f,%.2f,%.2f,%.2f,%.2f,%.3f,%.3f,%.3f,%.2f,%d,%d,%u,%u,PULL",
+      (double)gpsLat, (double)gpsLon,
+      (double)g_pitch, (double)g_roll, (double)g_yaw,
+      (double)g_gx, (double)g_gy, (double)g_gz,
+      (double)g_ax, (double)g_ay, (double)g_az,
+      (double)gpsSpeed,
+      statusSt, statusVpRaw, (unsigned)led2State, (unsigned)led2State);
+
+    String payload = "client23832:" + deviceToken + ":" + csv;
+    startSend(payload);
   }
 
   if (millis() - lastSerialPrint >= 1000) {
     lastSerialPrint = millis();
-    Serial.printf("P=%.1f R=%.1f Y=%.1f | GPS=%s | ST=%d VP=%d | LED2=%s (%.0f Hz) | TCP ok=%lu fail=%lu auto=%d phase=%u | heap=%u\n",
+    Serial.printf("P=%.1f R=%.1f Y=%.1f | GPS=%s | ST=%d VP=%d | LED2=%s (%.0fHz) | auth=%d TCP ok=%lu fail=%lu phase=%u | heap=%u\n",
       g_pitch, g_roll, g_yaw,
       gpsValid ? "OK" : "--",
       statusSt, statusVpRaw,
       led2StateName(led2State), led2FreqHz,
-      sendOkCount, sendFailCount, autoSendEnabled ? 1 : 0,
-      autoPhase, ESP.getFreeHeap());
+      loggedIn ? 1 : 0,
+      sendOkCount, sendFailCount, autoPhase,
+      ESP.getFreeHeap());
   }
 }

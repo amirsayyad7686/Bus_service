@@ -390,7 +390,11 @@ const gauge = new HudGauge(document.getElementById('speedGauge'));
 const map = L.map('map', { attributionControl: false, zoomControl: false }).setView([29.6312, 52.5387], 14);
 L.control.zoom({ position: 'topleft' }).addTo(map);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  maxZoom: 20,
+  subdomains: 'abcd',
+  attribution: '&copy; OpenStreetMap &copy; CARTO'
+}).addTo(map);
 
 const routeTrail = L.polyline([], {
   color: '#00f2fe',

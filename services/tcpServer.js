@@ -8,7 +8,7 @@ const FIELDS = [
   'gx','gy','gz','ax','ay','az',
   'speed','st','vp','led2','led2s'
 ];
-
+const commandRoutes = require('../routes/commands');
 function createTcpServer({ io, port, onTelemetry }) {
   const server = net.createServer((socket) => {
     const addr = `${socket.remoteAddress}:${socket.remotePort}`;
@@ -69,12 +69,15 @@ async function handleLine(raw, socket, ctx) {
   }
 
   // -------- GPIO ACK --------
-  if (/^client23832:ACK:GPIO:\d+:[01]$/.test(raw)) {
-    if (!ctx.getDeviceId()) return;
-    const [, pin, st] = raw.match(/ACK:GPIO:(\d+):([01])/);
-    ctx.io.emit('gpio-state', { pin: Number(pin), state: Number(st), ts: Date.now() });
-    return;
-  }
+if (/^client23832:ACK:GPIO:\d+:[01]$/.test(raw)) {
+  const [, pinStr, stateStr] = raw.match(/ACK:GPIO:(\d+):([01])/);
+  const pin = Number(pinStr);
+  const state = Number(stateStr);
+  commandRoutes.recordAck(pin, state);
+  io.emit('gpio-state', { pin, state, ts: Date.now() });
+  console.log(`[CMD] ACK ${pin} -> ${state}`);
+  continue;
+}
 
   // -------- TELEMETRY --------
   // client23832:<jwt>:lat,lon,pitch,...[,PULL]
@@ -90,7 +93,14 @@ async function handleLine(raw, socket, ctx) {
     ctx.setDeviceId(payload.deviceId);
 
     const hasPull = body.endsWith(',PULL');
-    if (hasPull) body = body.slice(0, -5);
+    if (hasPull) {
+      const cmd = commandRoutes.popCommand(payload.deviceId);
+      if (cmd) {
+        const line = `CMD:${cmd.type}:${cmd.pin}:${cmd.state}\n`;
+        socket.write(line);
+        console.log(`[CMD] -> ${payload.deviceId} ${cmd.type} ${cmd.pin}=${cmd.state}`);
+      }
+    }
 
     const csv = body.split(',');
     if (csv.length < FIELDS.length) return;
@@ -101,6 +111,7 @@ async function handleLine(raw, socket, ctx) {
     Device.updateOne({ deviceId: payload.deviceId }, {
       lastSeen: new Date(), lastTelemetry: obj
     }).exec();
+    telemetryStore.record(payload.deviceId, obj);   // ← ADD THIS
 
     ctx.onTelemetry(obj);
   }

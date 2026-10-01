@@ -3,7 +3,7 @@ const envFile = process.env.NODE_ENV === 'production'
   ? '.env.production'
   : '.env.development';
 require('dotenv').config({ path: path.join(__dirname, envFile) });
-
+const commandRoutes = require('./routes/commands');
 
 const http = require('http');
 const express = require('express');
@@ -59,6 +59,9 @@ async function main() {
 app.use('/admin', adminRoutes);   // specific prefix first
 app.use('/', authRoutes);
 app.use('/', dashRoutes);
+
+
+app.use('/api', commandRoutes);
 app.use('/api/device', apiDeviceRoutes);
 
   // Camera MJPEG endpoints (from old server.js)
@@ -75,6 +78,12 @@ app.use('/api/device', apiDeviceRoutes);
   
   // ---------- TCP servers ----------
   createTcpServer({ io, port: +process.env.TCP_PORT, onTelemetry });
+
+  app.use((req, res, next) => {
+    req.io = io;
+    next();
+  });
+
   createCamServer({ port: +process.env.CAM_TCP_PORT });
 
   // ---------- start ----------
