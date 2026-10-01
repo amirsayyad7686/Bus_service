@@ -304,10 +304,11 @@
   /* ---------- MAP ---------- */
   const map = L.map('map', { preferCanvas: true }).setView([29.5918, 52.5837], 14);
 
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; OpenStreetMap'
-  }).addTo(map);
+L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+  maxZoom: 17,
+  subdomains: 'abc',
+  attribution: '&copy; OpenTopoMap (CC-BY-SA)'
+}).addTo(map);
 
   setTimeout(() => map.invalidateSize(), 100);
   window.addEventListener('resize', () => map.invalidateSize());

@@ -314,9 +314,10 @@
     preferCanvas: true
   }).setView([29.5918, 52.5837], 12);
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 19,
-  attribution: '&copy; OpenStreetMap contributors'
+L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+  maxZoom: 17,
+  subdomains: 'abc',
+  attribution: '&copy; OpenTopoMap (CC-BY-SA)'
 }).addTo(map);
 
   // force recalculation after layout settles
