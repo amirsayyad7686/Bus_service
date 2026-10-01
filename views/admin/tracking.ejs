@@ -314,11 +314,10 @@
     preferCanvas: true
   }).setView([29.5918, 52.5837], 12);
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    maxZoom: 20,
-    subdomains: 'abcd',
-    attribution: '&copy; OpenStreetMap &copy; CARTO'
-  }).addTo(map);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
 
   // force recalculation after layout settles
   setTimeout(() => map.invalidateSize(), 100);
