@@ -314,9 +314,10 @@
     preferCanvas: true
   }).setView([29.5918, 52.5837], 12);
 
-L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-  maxZoom: 19,
-  attribution: 'Tiles &copy; Esri'
+L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', {
+  maxZoom: 20,
+  subdomains: 'abc',
+  attribution: '&copy; OpenStreetMap France'
 }).addTo(map);
 
   // force recalculation after layout settles
