@@ -53,6 +53,8 @@ function createCamServer({ port, onFrame }) {
     let buf = Buffer.alloc(0);
 
     socket.on('data', (data) => {
+        console.log(`[CAM] RX ${data.length}B  hdr=${data.slice(0, 8).toString('hex')}`);  // ← ADD
+
       buf = Buffer.concat([buf, data]);
 
       // Frame format: [AA][55][len0][len1][len2][len3][JPEG...]
