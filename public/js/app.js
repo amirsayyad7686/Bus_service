@@ -427,8 +427,7 @@ document.getElementById('clearMap').addEventListener('click', () => routeTrail.s
 
   let paused = false;
 
-  img.addEventListener('load', () => overlay.classList.add('hidden'));
-  img.addEventListener('error', () => overlay.classList.remove('hidden'));
+
 
   pauseBtn.addEventListener('click', () => {
     paused = !paused;
@@ -449,22 +448,38 @@ document.getElementById('clearMap').addEventListener('click', () => routeTrail.s
     else wrap.requestFullscreen?.();
   });
 
-  async function pollCam() {
-    try {
-      const res = await fetch('/api/cam');
-      const data = await res.json();
-      if (!data.hasFrame || data.lastFrameAge > 3000) {
-        fpsEl.textContent = 'STALLED';
-        fpsEl.style.color = '#ff6b6b';
-      } else {
-        fpsEl.textContent = `${data.fps.toFixed(1)} fps`;
-        fpsEl.style.color = '#05dfb2';
-      }
-    } catch (e) {
-      fpsEl.textContent = '—';
+async function pollCam() {
+  try {
+    const res = await fetch('/api/cam');
+    const data = await res.json();
+
+    const fresh = data.hasFrame && data.lastFrameAge < 3000;
+
+    if (fresh) {
+      // ── frame is flowing → hide overlay, show fps ──
+      overlay.classList.add('hidden');
+      fpsEl.textContent = `${data.fps.toFixed(1)} fps`;
+      fpsEl.style.color = '#05dfb2';
+    } else if (data.hasFrame) {
+      // ── stale (>3s old) → show reconnect hint ──
+      overlay.textContent = 'STALLED — reconnecting…';
+      overlay.classList.remove('hidden');
+      fpsEl.textContent = 'STALLED';
+      fpsEl.style.color = '#ff6b6b';
+    } else {
+      // ── no frame at all yet ──
+      overlay.textContent = 'waiting for camera…';
+      overlay.classList.remove('hidden');
+      fpsEl.textContent = '— fps';
+      fpsEl.style.color = '#6e90a2';
     }
-    setTimeout(pollCam, 1500);
+  } catch (e) {
+    overlay.classList.remove('hidden');
+    fpsEl.textContent = '—';
   }
+  setTimeout(pollCam, 1500);
+}
+
   pollCam();
 })();
 
