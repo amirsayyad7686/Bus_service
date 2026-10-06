@@ -52,45 +52,44 @@ function createCamServer({ port, onFrame }) {
 
     let buf = Buffer.alloc(0);
 
-    socket.on('data', (data) => {
-        console.log(`[CAM] RX ${data.length}B  hdr=${data.slice(0, 8).toString('hex')}`);  // ← ADD
+socket.on('data', (data) => {
+  buf = Buffer.concat([buf, data]);
 
-      buf = Buffer.concat([buf, data]);
+  // Loop while we can possibly parse a frame
+  while (buf.length >= 4) {
 
-      // Frame format: [AA][55][len0][len1][len2][len3][JPEG...]
-      while (buf.length >= 6) {
+    let headerLen = 4;
+    let len;
 
-        // Resync if magic bytes missing
-        if (buf[0] !== MAGIC0 || buf[1] !== MAGIC1) {
-          const idx = buf.indexOf(Buffer.from([MAGIC0, MAGIC1]), 1);
-          if (idx < 0) {
-            buf = buf.subarray(buf.length - 1);
-            break;
-          }
-          console.warn(`[CAM] resync: dropped ${idx} bytes`);
-          buf = buf.subarray(idx);
-          continue;
-        }
+    // --- auto-detect header format ---
+    if (buf.length >= 6 && buf[0] === 0xAA && buf[1] === 0x55) {
+      // 6-byte format: [AA][55][len32 LE]
+      headerLen = 6;
+      len = buf.readUInt32LE(2);
+    } else {
+      // 4-byte format: [len32 LE]
+      headerLen = 4;
+      len = buf.readUInt32LE(0);
+    }
 
-        const len = buf.readUInt32LE(2);
+    // Sanity check
+    if (len === 0 || len > 2_000_000) {
+      console.warn(`[CAM] bad length ${len}, resyncing`);
+      // Try to find next possible header start
+      const idx = buf.indexOf(Buffer.from([0xAA, 0x55]), 1);
+      buf = idx < 0 ? Buffer.alloc(0) : buf.subarray(idx);
+      continue;
+    }
 
-        if (len === 0 || len > 2_000_000) {
-          console.warn(`[CAM] bad frame length ${len}, resyncing`);
-          const idx = buf.indexOf(Buffer.from([MAGIC0, MAGIC1]), 2);
-          buf = idx < 0 ? Buffer.alloc(0) : buf.subarray(idx);
-          continue;
-        }
+    if (buf.length < headerLen + len) break;   // wait for full frame
 
-        if (buf.length < 6 + len) break;   // wait for the rest
+    const jpeg = buf.subarray(headerLen, headerLen + len);
+    buf = buf.subarray(headerLen + len);
 
-        const jpeg = buf.subarray(6, 6 + len);
-        buf = buf.subarray(6 + len);
-
-        pushFrame(jpeg);
-        if (onFrame) onFrame(jpeg);
-      }
-    });
-
+    pushFrame(jpeg);
+    if (onFrame) onFrame(jpeg);
+  }
+});
     socket.on('error', (err) => console.error(`[CAM] error from ${addr}:`, err.message));
     socket.on('close', () => {
       console.log(`[CAM] client disconnected: ${addr}`);
