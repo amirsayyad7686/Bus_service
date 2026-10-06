@@ -1,16 +1,18 @@
 const net = require('net');
 
-// Shared state between cam TCP server and MJPEG HTTP server
 const state = {
-  latestFrame: null,      // Buffer of the last JPEG
-  lastFrameTime: 0,       // ms timestamp
-  frameSubscribers: new Set(),  // open MJPEG HTTP responses
+  latestFrame: null,
+  lastFrameTime: 0,
+  frameSubscribers: new Set(),
   camFps: 0,
   framesThisSecond: 0,
   fpsWindowStart: Date.now(),
   hasClient: false,
   clientAddr: null
 };
+
+const MAGIC0 = 0xAA;
+const MAGIC1 = 0x55;
 
 function pushFrame(jpeg) {
   state.latestFrame = jpeg;
@@ -24,7 +26,6 @@ function pushFrame(jpeg) {
     state.fpsWindowStart = Date.now();
   }
 
-  // Broadcast to every MJPEG subscriber
   const header = Buffer.from(
     `--frame\r\nContent-Type: image/jpeg\r\nContent-Length: ${jpeg.length}\r\n\r\n`
   );
@@ -54,21 +55,34 @@ function createCamServer({ port, onFrame }) {
     socket.on('data', (data) => {
       buf = Buffer.concat([buf, data]);
 
-      // Parse 4-byte little-endian length prefix + JPEG
-      while (buf.length >= 4) {
-        const len = buf.readUInt32LE(0);
+      // Frame format: [AA][55][len0][len1][len2][len3][JPEG...]
+      while (buf.length >= 6) {
 
-        // Sanity check — 2 MB cap
-        if (len === 0 || len > 2_000_000) {
-          console.warn(`[CAM] bad frame length ${len}, resetting buffer`);
-          buf = Buffer.alloc(0);
-          return;
+        // Resync if magic bytes missing
+        if (buf[0] !== MAGIC0 || buf[1] !== MAGIC1) {
+          const idx = buf.indexOf(Buffer.from([MAGIC0, MAGIC1]), 1);
+          if (idx < 0) {
+            buf = buf.subarray(buf.length - 1);
+            break;
+          }
+          console.warn(`[CAM] resync: dropped ${idx} bytes`);
+          buf = buf.subarray(idx);
+          continue;
         }
 
-        if (buf.length < 4 + len) break;   // wait for full frame
+        const len = buf.readUInt32LE(2);
 
-        const jpeg = buf.subarray(4, 4 + len);
-        buf = buf.subarray(4 + len);
+        if (len === 0 || len > 2_000_000) {
+          console.warn(`[CAM] bad frame length ${len}, resyncing`);
+          const idx = buf.indexOf(Buffer.from([MAGIC0, MAGIC1]), 2);
+          buf = idx < 0 ? Buffer.alloc(0) : buf.subarray(idx);
+          continue;
+        }
+
+        if (buf.length < 6 + len) break;   // wait for the rest
+
+        const jpeg = buf.subarray(6, 6 + len);
+        buf = buf.subarray(6 + len);
 
         pushFrame(jpeg);
         if (onFrame) onFrame(jpeg);
