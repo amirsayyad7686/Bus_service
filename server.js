@@ -54,7 +54,8 @@ async function main() {
   io.on('connection', (sock) => {
     console.log(`[WS] browser ${sock.id}`);
   });
-
+// ---------- camera routes FIRST (bypass auth) ----------
+require('./services/mjpegServer').registerRoutes(app);
   // ---------- routes ----------
 app.use('/admin', adminRoutes);   // specific prefix first
 app.use('/', authRoutes);
@@ -64,8 +65,6 @@ app.use('/', dashRoutes);
 app.use('/api', commandRoutes);
 app.use('/api/device', apiDeviceRoutes);
 
-  // Camera MJPEG endpoints (from old server.js)
-  require('./services/mjpegServer').registerRoutes(app);
 
 
     // ---------- 404 & 500 ----------
