@@ -1,7 +1,7 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <WiFiClient.h>
-#include "driver/i2s_std.h"            // ===== ADDED =====
+#include "driver/i2s.h"   
 
 // ==================== WiFi ====================
 const char* WIFI_SSID = "Amir34";
@@ -54,7 +54,7 @@ unsigned long lastFrames = 0;
 unsigned long lastBytes  = 0;
 
 // ===== ADDED: mic state =====
-i2s_chan_handle_t rx_chan = nullptr;
+static bool micReady = false;
 int32_t s_dcOffset = 0;   // high-pass filter state
 unsigned long audioPackets = 0, audioFails = 0;
 // ============================
@@ -103,37 +103,40 @@ bool initCamera() {
 
 // ==================== Mic init (ADDED) ====================
 bool initMic() {
-  i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
-  chan_cfg.auto_clear = true;
-
-  if (i2s_new_channel(&chan_cfg, NULL, &rx_chan) != ESP_OK) {
-    Serial.println("[MIC] i2s_new_channel failed");
-    return false;
-  }
-
-  i2s_std_config_t std_cfg = {
-    .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(SAMPLE_RATE),
-    .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(
-                    I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_MONO),
-    .gpio_cfg = {
-      .mclk = I2S_GPIO_UNUSED,
-      .bclk = (gpio_num_t)I2S_BCLK_GPIO,
-      .ws   = (gpio_num_t)I2S_WS_GPIO,
-      .dout = I2S_GPIO_UNUSED,
-      .din  = (gpio_num_t)I2S_DIN_GPIO,
-      .invert_flags = { false, false, false },
-    },
+  i2s_config_t cfg = {
+    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+    .sample_rate = SAMPLE_RATE,
+    .bits_per_sample = I2S_BITS_PER_SAMPLE_32BIT,
+    .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+    .communication_format = (i2s_comm_format_t)(I2S_COMM_FORMAT_I2S | I2S_COMM_FORMAT_I2S_MSB),
+    .intr_alloc_flags = ESP_INTR_FLAG_LEVEL1,
+    .dma_buf_count = 4,
+    .dma_buf_len = CHUNK_SAMPLES,   // 160 = 10 ms
+    .use_apll = false,
+    .tx_desc_auto_clear = false,
+    .fixed_mclk = 0
   };
 
-  if (i2s_channel_init_std_mode(rx_chan, &std_cfg) != ESP_OK) {
-    Serial.println("[MIC] init std mode failed");
+  if (i2s_driver_install(I2S_NUM_0, &cfg, 0, NULL) != ESP_OK) {
+    Serial.println("[MIC] i2s_driver_install failed");
     return false;
   }
-  if (i2s_channel_enable(rx_chan) != ESP_OK) {
-    Serial.println("[MIC] enable failed");
+
+  i2s_pin_config_t pins = {
+    .mck_io_num   = I2S_PIN_NO_CHANGE,
+    .bck_io_num   = I2S_BCLK_GPIO,
+    .ws_io_num    = I2S_WS_GPIO,
+    .data_out_num = I2S_PIN_NO_CHANGE,
+    .data_in_num  = I2S_DIN_GPIO
+  };
+
+  if (i2s_set_pin(I2S_NUM_0, &pins) != ESP_OK) {
+    Serial.println("[MIC] i2s_set_pin failed");
     return false;
   }
-  Serial.println("[MIC] init OK");
+
+  i2s_zero_dma_buffer(I2S_NUM_0);
+  Serial.println("[MIC] init OK (legacy I2S)");
   return true;
 }
 // ========================================================
@@ -186,27 +189,33 @@ bool sendJpeg(uint8_t *jpg, size_t len) {
 
 // ==================== Send audio chunk (ADDED) ====================
 // Packet: [0x41 0x55][u16 LE length in bytes][int16 LE samples...]
+// ===== NEW: batch 3 chunks = 480 samples = ~30 ms per packet =====
+#define BATCH_CHUNKS   3
+#define BATCH_SAMPLES  (CHUNK_SAMPLES * BATCH_CHUNKS)   // 480
+
 bool sendAudioChunk() {
-  if (!rx_chan) return false;
+  if (!micReady) return false;
   if (!ensureAudioSocket()) { audioFails++; return false; }
 
-  int32_t raw[CHUNK_SAMPLES];
-  size_t br = 0;
-  esp_err_t err = i2s_channel_read(rx_chan, raw, sizeof(raw), &br,
-                                   pdMS_TO_TICKS(50));
-  if (err != ESP_OK || br < sizeof(int32_t)) return false;
+  static int32_t raw[BATCH_SAMPLES];
+  static int16_t pcm[BATCH_SAMPLES];
+  int total = 0;
 
-  int n = br / sizeof(int32_t);
-  if (n > CHUNK_SAMPLES) n = CHUNK_SAMPLES;
+  // Read BATCH_CHUNKS worth of data with a generous timeout
+  size_t want = sizeof(raw);
+  size_t got  = 0;
+  esp_err_t err = i2s_read(I2S_NUM_0, raw, want, &got,
+                           pdMS_TO_TICKS(100));   // 100 ms — enough for 3×10 ms
+  if (err != ESP_OK || got < sizeof(int32_t)) return false;
 
-  static int16_t pcm[CHUNK_SAMPLES];
+  int n = got / sizeof(int32_t);
+  if (n > BATCH_SAMPLES) n = BATCH_SAMPLES;
+
   for (int i = 0; i < n; i++) {
-    // INMP441 sends 24-bit data in the top of a 32-bit slot.
     int32_t s = raw[i] >> 14;
 
-    // High-pass: slowly track DC and subtract it.
-    // alpha = 1/256 -> ~ -3 dB at ~10 Hz at 16 kHz.
-    s_dcOffset = s_dcOffset + ((s - s_dcOffset) >> 8);
+    // Faster DC tracker: alpha ≈ 1/32 → cutoff ≈ 80 Hz
+    s_dcOffset += ((s - s_dcOffset) >> 5);
     s -= s_dcOffset;
 
     if (s >  32767) s =  32767;
@@ -234,8 +243,7 @@ bool sendAudioChunk() {
 void audioTask(void* arg) {
   while (true) {
     sendAudioChunk();
-    // i2s_channel_read already blocks ~10 ms, so tiny yield is enough
-    vTaskDelay(1);
+
   }
 }
 // ==========================================================
@@ -253,9 +261,11 @@ void setup() {
     ESP.restart();
   }
 
-  if (!initMic()) {
-    Serial.println("mic failed — continuing without audio");
-  }
+if (!initMic()) {
+  Serial.println("mic failed — continuing without audio");
+} else {
+  micReady = true;
+}
 
   WiFi.mode(WIFI_STA);
   WiFi.setSleep(false);
@@ -276,10 +286,9 @@ void setup() {
   Serial.printf("Audio -> tcp://%s:%u\n", SERVER_HOST, AUDIO_PORT);
 
   // ===== ADDED: start audio task on core 0 =====
-  if (rx_chan) {
-    xTaskCreatePinnedToCore(
-      audioTask, "audio", 4096, nullptr, 5, nullptr, 0);
-  }
+if (micReady) {
+  xTaskCreatePinnedToCore(audioTask, "audio", 4096, nullptr, 7, nullptr, 0);
+}
   // ============================================
 }
 
