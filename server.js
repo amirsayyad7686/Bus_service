@@ -15,7 +15,7 @@ const { Server } = require('socket.io');
 const connectDB = require('./config/db');
 const { createTcpServer } = require('./services/tcpServer');
 const { createCamServer } = require('./services/camTcpServer');
-
+const { createAudioServer } = require('./services/audioTcpServer');
 const authRoutes = require('./routes/auth');
 const dashRoutes = require('./routes/dashboard');
 const adminRoutes = require('./routes/admin');
@@ -84,7 +84,7 @@ app.use('/api/device', apiDeviceRoutes);
   });
 
   createCamServer({ port: +process.env.CAM_TCP_PORT });
-
+  createAudioServer({ port: +process.env.AUDIO_TCP_PORT, io });
   // ---------- start ----------
   server.listen(+process.env.HTTP_PORT, '0.0.0.0', () => {
     console.log(`[HTTP] http://localhost:${process.env.HTTP_PORT}`);

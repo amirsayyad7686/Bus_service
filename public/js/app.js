@@ -755,3 +755,98 @@ const gpioState = {};     // pin -> 0|1 (last ACK from ESP32)
     } catch (_) {}
   }, 3000);
 })();
+
+
+
+
+
+
+
+
+
+
+
+/* ==================================================================
+   11. LIVE AUDIO PLAYBACK FROM ESP32 MIC
+   ================================================================== */
+(function setupAudio() {
+  const btn = document.getElementById('audioToggle');
+  if (!btn) return;
+
+  const SAMPLE_RATE = 16000;
+  let audioCtx    = null;
+  let nextPlayTime = 0;
+  let playing     = false;
+  let underruns   = 0;
+  let lastChunkT  = 0;
+
+  function ensureCtx() {
+    if (audioCtx) return;
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)({
+      sampleRate: SAMPLE_RATE,
+      latencyHint: 'interactive'
+    });
+    nextPlayTime = audioCtx.currentTime;
+  }
+
+  function playChunk(u8) {
+    if (!playing || !audioCtx) return;
+
+    // socket.io gives a Buffer-like; make sure we have a clean byte view
+    const bytes = u8 instanceof Uint8Array ? u8 : new Uint8Array(u8);
+    const n = bytes.byteLength >> 1;
+    if (n === 0) return;
+
+    // Copy into an Int16Array (handle possible byteOffset)
+    const int16 = new Int16Array(n);
+    const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    for (let i = 0; i < n; i++) int16[i] = dv.getInt16(i * 2, true);
+
+    const f32 = new Float32Array(n);
+    for (let i = 0; i < n; i++) f32[i] = int16[i] / 32768;
+
+    const buf = audioCtx.createBuffer(1, n, SAMPLE_RATE);
+    buf.copyToChannel(f32, 0);
+
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+
+    const now = audioCtx.currentTime;
+    // If we've fallen behind (or just started), resync the clock
+    if (nextPlayTime < now + 0.02) {
+      nextPlayTime = now + 0.05;
+      underruns++;
+    }
+    src.start(nextPlayTime);
+    nextPlayTime += buf.duration;
+    lastChunkT = performance.now();
+  }
+
+  // Connect to the same socket.io server the rest of the page uses
+  const sock = window.io();
+  sock.on('audio', playChunk);
+
+  btn.addEventListener('click', async () => {
+    ensureCtx();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    playing = !playing;
+    btn.classList.toggle('active', playing);
+    btn.textContent = playing ? '🔊 LIVE' : '🔇 MUTED';
+    if (playing) {
+      nextPlayTime = audioCtx.currentTime + 0.05;
+      underruns = 0;
+    }
+  });
+
+  // Watchdog: if the ESP32 goes quiet for >2 s, show it
+  setInterval(() => {
+    if (!playing) return;
+    const age = performance.now() - lastChunkT;
+    if (lastChunkT > 0 && age > 2000) {
+      btn.textContent = '🔇 NO SIGNAL';
+    } else if (playing) {
+      btn.textContent = '🔊 LIVE';
+    }
+  }, 500);
+})();
