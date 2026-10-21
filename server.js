@@ -16,6 +16,10 @@ const connectDB = require('./config/db');
 const { createTcpServer } = require('./services/tcpServer');
 const { createCamServer } = require('./services/camTcpServer');
 const { createAudioServer } = require('./services/audioTcpServer');
+const { createSpeakerServer, sendToSpeaker, logSpeakerStats } =
+  require('./services/speakerTcpServer');
+
+
 const authRoutes = require('./routes/auth');
 const dashRoutes = require('./routes/dashboard');
 const adminRoutes = require('./routes/admin');
@@ -85,6 +89,19 @@ app.use('/api/device', apiDeviceRoutes);
 
   createCamServer({ port: +process.env.CAM_TCP_PORT });
   createAudioServer({ port: +process.env.AUDIO_TCP_PORT, io });
+  createSpeakerServer({ port: +process.env.SPEAKER_TCP_PORT });
+
+
+  io.on('connection', (sock) => {
+  console.log(`[WS] browser ${sock.id}`);
+
+  sock.on('speaker-audio', (data) => {
+    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+    sendToSpeaker(buf);
+  });
+});
+setInterval(logSpeakerStats, 2000);
+
   // ---------- start ----------
   server.listen(+process.env.HTTP_PORT, '0.0.0.0', () => {
     console.log(`[HTTP] http://localhost:${process.env.HTTP_PORT}`);

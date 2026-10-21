@@ -2,10 +2,10 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include "driver/i2s.h"
-
+#include "lwip/sockets.h"
 // ==================== WiFi ====================
-const char* WIFI_SSID = "Amir34";
-const char* WIFI_PASS = "24683579";
+const char* WIFI_SSID = "Amir";
+const char* WIFI_PASS = "shirazamir35963";
 
 // ==================== Node server ====================
 const char* SERVER_HOST   = "181.41.194.124";
@@ -43,7 +43,7 @@ const uint16_t AUDIO_PORT  = 5204;   // audio
 #define I2S_DIN_GPIO    38
 #define SAMPLE_RATE     16000
 #define CHUNK_SAMPLES   160
-#define BATCH_CHUNKS    3
+#define BATCH_CHUNKS    6
 #define BATCH_SAMPLES   (CHUNK_SAMPLES * BATCH_CHUNKS)   // 480
 // ==========================================================
 
@@ -162,14 +162,21 @@ bool ensureAudioSocket() {
   Serial.printf("[AUD] connecting to %s:%u ... ", SERVER_HOST, AUDIO_PORT);
   if (audioSocket.connect(SERVER_HOST, AUDIO_PORT, 3000)) {
     audioSocket.setNoDelay(true);
-    audioSocket.setTimeout(2);
+
+    // Enlarge TX buffer so write() rarely blocks
+    int fd = audioSocket.fd();
+    if (fd >= 0) {
+      int sz = 16384;
+      // SOL_SOCKET = 0xffff on lwip, SO_SNDBUF = 0x1001
+      setsockopt(fd, 0xffff, 0x1001, &sz, sizeof(sz));
+    }
+
     Serial.println("OK");
     return true;
   }
   Serial.println("FAILED");
   return false;
 }
-
 // ==================== Send JPEG ====================
 bool sendJpeg(uint8_t *jpg, size_t len) {
   if (!ensureSocket()) return false;
@@ -194,6 +201,7 @@ bool sendAudioChunk() {
 
   static int32_t raw[BATCH_SAMPLES];
   static int16_t pcm[BATCH_SAMPLES];
+  static uint8_t txbuf[4 + BATCH_SAMPLES * 2];
 
   size_t want = sizeof(raw);
   size_t got  = 0;
@@ -205,12 +213,13 @@ bool sendAudioChunk() {
   if (n > BATCH_SAMPLES) n = BATCH_SAMPLES;
 
   int32_t peakRaw = 0;
-  for (int i = 0; i < n; i++) {
+for (int i = 0; i < n; i++) {
     int32_t s = raw[i] >> 14;
-
-    // Faster DC tracker: alpha ≈ 1/32 → cutoff ≈ 80 Hz
     s_dcOffset += ((s - s_dcOffset) >> 5);
     s -= s_dcOffset;
+
+    // ---- GAIN ----
+    s = s * 4;    // try 2, 4, 8
 
     int32_t a = s < 0 ? -s : s;
     if (a > peakRaw) peakRaw = a;
@@ -218,37 +227,41 @@ bool sendAudioChunk() {
     if (s >  32767) s =  32767;
     if (s < -32768) s = -32768;
     pcm[i] = (int16_t)s;
-  }
+}
 
   uint16_t payload = (uint16_t)(n * 2);
-  uint8_t hdr[4] = {
-    0x41, 0x55,
-    (uint8_t)(payload & 0xFF),
-    (uint8_t)((payload >> 8) & 0xFF)
-  };
 
-  audioSocket.write(hdr, 4);
-  audioSocket.write((const uint8_t*)pcm, payload);
-  audioSocket.flush();
+  // Build one contiguous packet: header + payload
+  txbuf[0] = 0x41;
+  txbuf[1] = 0x55;
+  txbuf[2] = (uint8_t)(payload & 0xFF);
+  txbuf[3] = (uint8_t)((payload >> 8) & 0xFF);
+  memcpy(txbuf + 4, pcm, payload);
+
+  // ONE write, NO flush
+  size_t written = audioSocket.write(txbuf, 4 + payload);
+  if (written == 0) { audioFails++; return false; }
+
   audioPackets++;
 
-  // ---- Diagnostics: once per second ----
+  // Diagnostics
   static unsigned long lastLog = 0;
   static int reads = 0;
   static int32_t peakAccum = 0;
+  static unsigned long worstWriteMs = 0;
   reads++;
   if (peakRaw > peakAccum) peakAccum = peakRaw;
   if (millis() - lastLog >= 1000) {
-    Serial.printf("[MIC] %d pkt/s, last %u samples, peak=%ld\n",
-                  reads, (unsigned)n, (long)peakAccum);
+    Serial.printf("[MIC] %d pkt/s, %u samples, peak=%ld, worstWrite=%lums\n",
+                  reads, (unsigned)n, (long)peakAccum, worstWriteMs);
     reads = 0;
     peakAccum = 0;
+    worstWriteMs = 0;
     lastLog = millis();
   }
 
   return true;
 }
-
 // ==================== Audio task ====================
 void audioTask(void* arg) {
   while (true) {
