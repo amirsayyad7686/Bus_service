@@ -670,3 +670,9 @@ html, body {
   border-color: #166b3a;
   background: #08261a;
 }
+
+#micSend.active {
+  color: #ff8c8c;
+  border-color: #6a2020;
+  background: #2a1014;
+}

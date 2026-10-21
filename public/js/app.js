@@ -860,3 +860,87 @@ const gpioState = {};     // pin -> 0|1 (last ACK from ESP32)
     }
   }, 500);
 })();
+
+
+
+
+
+
+
+
+
+
+
+
+/* ==================================================================
+   12. BROWSER → ESP32 SPEAKER (outbound audio)
+   ================================================================== */
+(function setupSpeakerSend() {
+  const btn = document.getElementById('micSend');
+  if (!btn) return;
+
+  let ctx = null, stream = null, src = null, proc = null, muteNode = null;
+  let sending = false;
+  let inRate = 48000;
+
+  const sock = window.io();
+
+  function to16k(f32, inRate) {
+    const ratio = inRate / 16000;
+    const outLen = Math.floor(f32.length / ratio);
+    const out = new Int16Array(outLen);
+    for (let i = 0; i < outLen; i++) {
+      let v = f32[Math.floor(i * ratio)] * 32767;
+      if (v >  32767) v =  32767;
+      if (v < -32768) v = -32768;
+      out[i] = v | 0;
+    }
+    return out;
+  }
+
+  async function start() {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+    });
+    ctx = new AudioContext();
+    inRate = ctx.sampleRate;
+    src = ctx.createMediaStreamSource(stream);
+
+    proc = ctx.createScriptProcessor(2048, 1, 1);
+    proc.onaudioprocess = (e) => {
+      if (!sending) return;
+      const f32 = e.inputBuffer.getChannelData(0);
+      const pcm = to16k(f32, inRate);
+      sock.emit('speaker-audio', pcm.buffer);
+    };
+
+    muteNode = ctx.createGain();
+    muteNode.gain.value = 0;
+    src.connect(proc);
+    proc.connect(muteNode);
+    muteNode.connect(ctx.destination);
+  }
+
+  function stop() {
+    if (proc) { proc.disconnect(); proc.onaudioprocess = null; proc = null; }
+    if (muteNode) { muteNode.disconnect(); muteNode = null; }
+    if (src) { src.disconnect(); src = null; }
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    if (ctx) { ctx.close(); ctx = null; }
+  }
+
+  btn.addEventListener('click', async () => {
+    sending = !sending;
+    btn.classList.toggle('active', sending);
+    btn.textContent = sending ? '🎤 TALKING' : '🎤 TALK';
+    if (sending) {
+      try { await start(); }
+      catch (e) {
+        console.error(e); sending = false;
+        btn.classList.remove('active'); btn.textContent = '🎤 TALK';
+      }
+    } else {
+      stop();
+    }
+  });
+})();
