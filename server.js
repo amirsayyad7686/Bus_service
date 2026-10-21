@@ -100,6 +100,7 @@ app.use('/api/device', apiDeviceRoutes);
     sendToSpeaker(buf);
   });
 });
+
 setInterval(logSpeakerStats, 2000);
 
   // ---------- start ----------
